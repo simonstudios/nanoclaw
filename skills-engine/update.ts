@@ -190,21 +190,24 @@ export async function applyUpdate(newCorePath: string): Promise<UpdateResult> {
         fs.copyFileSync(tmpCurrent, currentPath);
         fs.unlinkSync(tmpCurrent);
 
-        if (isGitRepo()) {
+        if (isGitRepo(projectRoot)) {
           const baseContent = fs.readFileSync(basePath, 'utf-8');
           const theirsContent = fs.readFileSync(newCoreSrcPath, 'utf-8');
 
-          setupRerereAdapter(relPath, baseContent, oursContent, theirsContent);
-          const autoResolved = runRerere(currentPath);
+          setupRerereAdapter(relPath, baseContent, oursContent, theirsContent, projectRoot);
+          const autoResolved = runRerere(currentPath, projectRoot);
 
           if (autoResolved) {
-            execFileSync('git', ['add', relPath], { stdio: 'pipe' });
-            execSync('git rerere', { stdio: 'pipe' });
-            cleanupMergeState(relPath);
+            execFileSync('git', ['add', relPath], {
+              stdio: 'pipe',
+              cwd: projectRoot,
+            });
+            execSync('git rerere', { stdio: 'pipe', cwd: projectRoot });
+            cleanupMergeState(relPath, projectRoot);
             continue;
           }
 
-          cleanupMergeState(relPath);
+          cleanupMergeState(relPath, projectRoot);
         }
 
         mergeConflicts.push(relPath);
@@ -365,4 +368,3 @@ export async function applyUpdate(newCorePath: string): Promise<UpdateResult> {
     releaseLock();
   }
 }
-
