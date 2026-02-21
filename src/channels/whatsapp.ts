@@ -176,7 +176,9 @@ export class WhatsAppChannel implements Channel {
           if (!content && isVoiceMessage(msg)) {
             try {
               const transcript = await transcribeAudioMessage(msg, this.sock);
-              content = transcript ? `[Voice: ${transcript}]` : '[Voice Message]';
+              content = transcript
+                ? (transcript.startsWith('[') ? transcript : `[Voice: ${transcript}]`)
+                : '[Voice Message]';
             } catch (err) {
               logger.error({ err }, 'Voice transcription failed');
               content = '[Voice Message - transcription failed]';
