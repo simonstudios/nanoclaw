@@ -61,9 +61,9 @@ Help a user with a customized NanoClaw install safely incorporate upstream chang
 
 This install has the following local customizations that MUST be preserved during any merge. If upstream changes conflict with these, always keep the local version and layer in the upstream fix around it:
 
-1. **Apple Container runtime** — This install uses Apple Container (`container` CLI) instead of Docker. The `CONTAINER_RUNTIME` env var defaults to `container` in `container/build.sh` and `src/container-runner.ts`. If upstream changes reference `docker`, preserve `container` as the runtime. Do NOT revert to Docker.
+1. **Apple Container runtime** — This install uses Apple Container (`container` CLI) instead of Docker. The `CONTAINER_RUNTIME` env var defaults to `container` in `container/build.sh` and runtime handling is defined in `src/container-runtime.ts`. If upstream changes reference `docker`, preserve `container` as the runtime. Do NOT revert to Docker.
 
-2. **Voice transcription** — OpenAI Whisper-based voice message transcription has been applied via the `/add-voice-transcription` skill. Check `.nanoclaw/state.yaml` for `voice-transcription` in `applied_skills`. Any upstream changes to the message processing pipeline should preserve the voice transcription hook.
+2. **Voice transcription** — Groq Whisper-based voice message transcription has been applied via the `/add-voice-transcription` skill. Check `.nanoclaw/state.yaml` for `voice-transcription` in `applied_skills`. Any upstream changes to the message processing pipeline should preserve the voice transcription hook.
 
 3. **launchd service** — The service runs via `~/Library/LaunchAgents/com.nanoclaw.plist`, not Docker Compose or systemd.
 
