@@ -3,14 +3,8 @@
 
 FROM node:22-slim
 
-# Install system dependencies for Chromium + GitHub CLI
-# curl must be installed before adding the gh CLI apt repo
-RUN apt-get update && apt-get install -y curl \
-    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-       | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get update && apt-get install -y \
+# Install system dependencies for Chromium
+RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
     fonts-noto-color-emoji \
@@ -27,7 +21,7 @@ RUN apt-get update && apt-get install -y curl \
     libcups2 \
     libdrm2 \
     libxshmfence1 \
-    gh \
+    curl \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -46,6 +40,10 @@ COPY agent-runner/ ./
 
 # Build TypeScript
 RUN npm run build
+
+# Install GitHub CLI (pre-downloaded by build.sh — Apple Container has no network during build)
+COPY gh /usr/local/bin/gh
+RUN chmod +x /usr/local/bin/gh
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input

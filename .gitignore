@@ -23,6 +23,9 @@ groups/global/*
 .env
 .transcription.config.json
 
+# Pre-downloaded binaries for container build
+container/gh
+
 # OS
 .DS_Store
 
