@@ -26,7 +26,7 @@ Fine-grained PAT scoped to `simonstudios` org (all repos). Permissions needed:
 - `pull_requests: read`
 - `metadata: read`
 
-Token stored in `.env` as `GITHUB_TOKEN`, passed through existing secrets pipeline.
+Token stored in `.env` as `GH_TOKEN`, passed through existing secrets pipeline.
 
 ## Changes
 
@@ -36,12 +36,12 @@ Install `gh` CLI from GitHub's official apt repository.
 
 ### 2. Secrets Pipeline (`src/container-runner.ts`)
 
-Add `GITHUB_TOKEN` to `readSecrets()` allowlist alongside existing keys.
+Add `GH_TOKEN` to `readSecrets()` allowlist alongside existing keys.
 
 ### 3. Agent Runner (`container/agent-runner/src/index.ts`)
 
-- Add `GH_TOKEN` to SDK environment (set from `GITHUB_TOKEN` secret) so `gh` authenticates automatically
-- Add `GH_TOKEN` to `SECRET_ENV_VARS` array so the Bash sanitization hook strips it from subprocesses
+- Add `GH_TOKEN` to SDK environment (set from secrets) so `gh` authenticates automatically
+- Do NOT add to `SECRET_ENV_VARS` — unlike API keys, `GH_TOKEN` must be available to Bash commands for `gh` to authenticate. The sanitization hook is for keys the agent should never touch (billing-sensitive API keys). The GitHub PAT is specifically intended for agent-initiated commands.
 
 ### 4. Container Skill (`container/skills/github/SKILL.md`)
 
@@ -65,11 +65,11 @@ Skill file covering three tiers:
 
 ### 5. `.env`
 
-User adds `GITHUB_TOKEN=ghp_...` to their `.env` file.
+User adds `GH_TOKEN=github_pat_...` to their `.env` file.
 
 ## Architecture Fit
 
 Follows the exact same pattern as the existing Anthropic API key:
 - `.env` on host -> `readSecrets()` -> stdin JSON to container -> SDK env only
-- Bash sanitization hook prevents leakage to subprocesses
+- GH_TOKEN intentionally NOT sanitized from Bash (unlike API keys) — `gh` needs it
 - Token never written to disk inside container
