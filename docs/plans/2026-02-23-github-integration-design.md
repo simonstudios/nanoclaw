@@ -19,17 +19,14 @@ Add `gh` CLI to the agent container so NanoClaw can manage GitHub issues, projec
 
 ## Authentication
 
-Fine-grained PAT scoped to `simonstudios` org (all repos).
+Classic PAT (fine-grained PATs don't expose Projects v2 permissions in the UI).
 
-**Repository permissions:**
-- `Issues: Read and write`
-- `Pull requests: Read-only`
-- `Metadata: Read-only`
+**Scopes:**
+- `repo` — issues read/write, PRs read
+- `project` — Projects v2 read/write
+- `read:org` — org-level project queries
 
-**Organization permissions** (scroll down past repository permissions):
-- `Projects: Read and write`
-
-> Note: The Projects permission is under **Organization permissions**, not Repository permissions. It won't appear in the repository permissions list.
+Settings > Developer settings > Personal access tokens > **Tokens (classic)** > Generate new token.
 
 Token stored in `.env` as `GH_TOKEN`, passed through existing secrets pipeline.
 
@@ -70,7 +67,7 @@ Skill file covering three tiers:
 
 ### 5. `.env`
 
-User adds `GH_TOKEN=github_pat_...` to their `.env` file.
+User adds `GH_TOKEN=ghp_...` to their `.env` file.
 
 ## Architecture Fit
 
