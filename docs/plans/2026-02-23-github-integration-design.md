@@ -19,12 +19,17 @@ Add `gh` CLI to the agent container so NanoClaw can manage GitHub issues, projec
 
 ## Authentication
 
-Fine-grained PAT scoped to `simonstudios` org (all repos). Permissions needed:
+Fine-grained PAT scoped to `simonstudios` org (all repos).
 
-- `issues: read/write`
-- `projects: read/write`
-- `pull_requests: read`
-- `metadata: read`
+**Repository permissions:**
+- `Issues: Read and write`
+- `Pull requests: Read-only`
+- `Metadata: Read-only`
+
+**Organization permissions** (scroll down past repository permissions):
+- `Projects: Read and write`
+
+> Note: The Projects permission is under **Organization permissions**, not Repository permissions. It won't appear in the repository permissions list.
 
 Token stored in `.env` as `GH_TOKEN`, passed through existing secrets pipeline.
 
@@ -32,7 +37,7 @@ Token stored in `.env` as `GH_TOKEN`, passed through existing secrets pipeline.
 
 ### 1. Dockerfile
 
-Install `gh` CLI from GitHub's official apt repository.
+Pre-download `gh` CLI binary on host (build.sh), COPY into container after all network-dependent layers. Apple Container has no network during builds, so apt-get install is not an option for new packages.
 
 ### 2. Secrets Pipeline (`src/container-runner.ts`)
 
