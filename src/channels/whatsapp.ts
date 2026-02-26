@@ -21,6 +21,7 @@ import {
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
+import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
 import {
   Channel,
   OnInboundMessage,
@@ -198,7 +199,7 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
-          const content =
+          let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
@@ -238,6 +239,21 @@ export class WhatsAppChannel implements Channel {
               }
             } catch (err) {
               logger.warn({ jid: chatJid, err }, 'Failed to download image');
+            }
+          }
+
+          // Transcribe voice messages
+          if (!content && isVoiceMessage(msg)) {
+            try {
+              const transcript = await transcribeAudioMessage(msg, this.sock);
+              content = transcript
+                ? transcript.startsWith('[')
+                  ? transcript
+                  : `[Voice: ${transcript}]`
+                : '[Voice Message]';
+            } catch (err) {
+              logger.error({ err }, 'Voice transcription failed');
+              content = '[Voice Message - transcription failed]';
             }
           }
 
