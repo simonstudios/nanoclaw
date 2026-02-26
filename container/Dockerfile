@@ -41,6 +41,10 @@ COPY agent-runner/ ./
 # Build TypeScript
 RUN npm run build
 
+# Install GitHub CLI (pre-downloaded by build.sh — Apple Container has no network during build)
+COPY gh /usr/local/bin/gh
+RUN chmod +x /usr/local/bin/gh
+
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 

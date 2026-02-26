@@ -11,13 +11,7 @@ import { BASE_DIR, NANOCLAW_DIR } from './constants.js';
 import { copyDir } from './fs-utils.js';
 import { isCustomizeActive } from './customize.js';
 import { acquireLock } from './lock.js';
-import {
-  cleanupMergeState,
-  isGitRepo,
-  mergeFile,
-  runRerere,
-  setupRerereAdapter,
-} from './merge.js';
+import { mergeFile } from './merge.js';
 import { recordPathRemap } from './path-remap.js';
 import { computeFileHash, readState, writeState } from './state.js';
 import {
@@ -172,8 +166,6 @@ export async function applyUpdate(newCorePath: string): Promise<UpdateResult> {
       }
 
       // Three-way merge: current ← base → newCore
-      // Save current content before merge overwrites it (needed for rerere stage 2 = "ours")
-      const oursContent = fs.readFileSync(currentPath, 'utf-8');
       const tmpCurrent = path.join(
         os.tmpdir(),
         `nanoclaw-update-${crypto.randomUUID()}-${path.basename(relPath)}`,
@@ -186,30 +178,9 @@ export async function applyUpdate(newCorePath: string): Promise<UpdateResult> {
         fs.copyFileSync(tmpCurrent, currentPath);
         fs.unlinkSync(tmpCurrent);
       } else {
-        // Copy conflict markers to working tree path before rerere
+        // Conflict — copy markers to working tree
         fs.copyFileSync(tmpCurrent, currentPath);
         fs.unlinkSync(tmpCurrent);
-
-        if (isGitRepo(projectRoot)) {
-          const baseContent = fs.readFileSync(basePath, 'utf-8');
-          const theirsContent = fs.readFileSync(newCoreSrcPath, 'utf-8');
-
-          setupRerereAdapter(relPath, baseContent, oursContent, theirsContent, projectRoot);
-          const autoResolved = runRerere(currentPath, projectRoot);
-
-          if (autoResolved) {
-            execFileSync('git', ['add', relPath], {
-              stdio: 'pipe',
-              cwd: projectRoot,
-            });
-            execSync('git rerere', { stdio: 'pipe', cwd: projectRoot });
-            cleanupMergeState(relPath, projectRoot);
-            continue;
-          }
-
-          cleanupMergeState(relPath, projectRoot);
-        }
-
         mergeConflicts.push(relPath);
       }
     }
@@ -258,9 +229,16 @@ export async function applyUpdate(newCorePath: string): Promise<UpdateResult> {
     }
 
     // --- Record path remaps from update metadata ---
-    const remapFile = path.join(newCorePath, '.nanoclaw-meta', 'path_remap.yaml');
+    const remapFile = path.join(
+      newCorePath,
+      '.nanoclaw-meta',
+      'path_remap.yaml',
+    );
     if (fs.existsSync(remapFile)) {
-      const remap = parseYaml(fs.readFileSync(remapFile, 'utf-8')) as Record<string, string>;
+      const remap = parseYaml(fs.readFileSync(remapFile, 'utf-8')) as Record<
+        string,
+        string
+      >;
       if (remap && typeof remap === 'object') {
         recordPathRemap(remap);
       }
@@ -280,11 +258,16 @@ export async function applyUpdate(newCorePath: string): Promise<UpdateResult> {
     let hasNpmDeps = false;
 
     for (const skill of state.applied_skills) {
-      const outcomes = skill.structured_outcomes as Record<string, unknown> | undefined;
+      const outcomes = skill.structured_outcomes as
+        | Record<string, unknown>
+        | undefined;
       if (!outcomes) continue;
 
       if (outcomes.npm_dependencies) {
-        Object.assign(allNpmDeps, outcomes.npm_dependencies as Record<string, string>);
+        Object.assign(
+          allNpmDeps,
+          outcomes.npm_dependencies as Record<string, string>,
+        );
         hasNpmDeps = true;
       }
       if (outcomes.env_additions) {
@@ -321,7 +304,9 @@ export async function applyUpdate(newCorePath: string): Promise<UpdateResult> {
     const skillReapplyResults: Record<string, boolean> = {};
 
     for (const skill of state.applied_skills) {
-      const outcomes = skill.structured_outcomes as Record<string, unknown> | undefined;
+      const outcomes = skill.structured_outcomes as
+        | Record<string, unknown>
+        | undefined;
       if (!outcomes?.test) continue;
 
       const testCmd = outcomes.test as string;
