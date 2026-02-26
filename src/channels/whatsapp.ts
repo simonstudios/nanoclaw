@@ -209,7 +209,7 @@ export class WhatsAppChannel implements Channel {
           let imagePath: string | undefined;
           if (msg.message?.imageMessage) {
             try {
-              const buffer = await downloadMediaMessage(
+              const buffer = (await downloadMediaMessage(
                 msg,
                 'buffer',
                 {},
@@ -217,7 +217,7 @@ export class WhatsAppChannel implements Channel {
                   logger,
                   reuploadRequest: this.sock.updateMediaMessage,
                 },
-              ) as Buffer;
+              )) as Buffer;
               // Enforce 5MB size limit
               if (buffer.length <= 5 * 1024 * 1024) {
                 const hash = crypto.randomBytes(8).toString('hex');
@@ -226,9 +226,15 @@ export class WhatsAppChannel implements Channel {
                 const filePath = path.join(imagesDir, `${hash}.jpg`);
                 fs.writeFileSync(filePath, buffer);
                 imagePath = filePath;
-                logger.info({ jid: chatJid, size: buffer.length, path: filePath }, 'Image downloaded');
+                logger.info(
+                  { jid: chatJid, size: buffer.length, path: filePath },
+                  'Image downloaded',
+                );
               } else {
-                logger.warn({ jid: chatJid, size: buffer.length }, 'Image too large, skipping (>5MB)');
+                logger.warn(
+                  { jid: chatJid, size: buffer.length },
+                  'Image too large, skipping (>5MB)',
+                );
               }
             } catch (err) {
               logger.warn({ jid: chatJid, err }, 'Failed to download image');

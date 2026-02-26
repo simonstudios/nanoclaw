@@ -404,7 +404,10 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend, hostToContainerImagePath);
+          const formatted = formatMessages(
+            messagesToSend,
+            hostToContainerImagePath,
+          );
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(

@@ -558,7 +558,9 @@ describe('WhatsAppChannel', () => {
       // Delivered with fallback transcription text when transcription is unavailable in test
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
-        expect.objectContaining({ content: '[Voice Message - transcription unavailable]' }),
+        expect.objectContaining({
+          content: '[Voice Message - transcription unavailable]',
+        }),
       );
     });
 
