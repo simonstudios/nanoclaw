@@ -120,6 +120,7 @@ const sock = makeWASocket({
   printQRInTerminal: false,
   logger,
   browser: Browsers.macOS('Chrome'),
+  version: [2, 3000, 1033942132],
 });
 
 const timeout = setTimeout(() => {
