@@ -6,6 +6,7 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   WASocket,
+  downloadMediaMessage,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -18,7 +19,7 @@ import {
 } from '../db.js';
 import { logger } from '../logger.js';
 import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import { Channel, MediaAttachment, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -64,6 +65,7 @@ export class WhatsAppChannel implements Channel {
       printQRInTerminal: false,
       logger,
       browser: Browsers.macOS('Chrome'),
+      version: [2, 3000, 1033942132],
     });
 
     this.sock.ev.on('connection.update', (update) => {
@@ -81,7 +83,7 @@ export class WhatsAppChannel implements Channel {
 
       if (connection === 'close') {
         this.connected = false;
-        const reason = (lastDisconnect?.error as any)?.output?.statusCode;
+        const reason = (lastDisconnect?.error as { output?: { statusCode?: number } })?.output?.statusCode;
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
         logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
 
@@ -104,7 +106,9 @@ export class WhatsAppChannel implements Channel {
         logger.info('Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
-        this.sock.sendPresenceUpdate('available').catch(() => {});
+        this.sock.sendPresenceUpdate('available').catch((err) => {
+          logger.warn({ err }, 'Failed to send presence update');
+        });
 
         // Build LID to phone mapping from auth state for self-chat translation
         if (this.sock.user) {
@@ -185,6 +189,40 @@ export class WhatsAppChannel implements Channel {
             }
           }
 
+          // Download and attach image messages
+          let media: MediaAttachment | undefined;
+          if (msg.message?.imageMessage) {
+            try {
+              const buffer = (await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                {
+                  logger: logger as any,
+                  reuploadRequest: this.sock.updateMediaMessage,
+                },
+              )) as Buffer;
+
+              if (buffer && buffer.length > 0) {
+                const mimeType = msg.message.imageMessage.mimetype || 'image/jpeg';
+                media = {
+                  type: 'image',
+                  mimeType,
+                  data: buffer.toString('base64'),
+                  caption: msg.message.imageMessage.caption || undefined,
+                };
+                logger.info({ bytes: buffer.length, mimeType }, 'Downloaded image message');
+              }
+            } catch (err) {
+              logger.error({ err }, 'Image download failed, falling back to caption only');
+            }
+
+            // If there's no text content yet, use the caption or a placeholder
+            if (!content) {
+              content = msg.message.imageMessage.caption || '[Image]';
+            }
+          }
+
           // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
           if (!content) continue;
 
@@ -209,6 +247,7 @@ export class WhatsAppChannel implements Channel {
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
+            media,
           });
         }
       }
