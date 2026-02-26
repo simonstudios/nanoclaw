@@ -26,6 +26,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  assistantName?: string;
   secrets?: Record<string, string>;
 }
 
@@ -47,9 +48,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -57,6 +62,28 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+
+/**
+ * Parse a message string that may contain an embedded <image> element.
+ * Returns a content block array if an image is found, otherwise the plain string.
+ */
+function parseMessageContent(text: string): string | ContentBlock[] {
+  const imageMatch = text.match(/<image\s+mimeType="([^"]+)"\s+data="([^"]+)"\s*\/>/);
+  if (!imageMatch) return text;
+
+  const mimeType = imageMatch[1];
+  const data = imageMatch[2];
+  // The text content is everything outside the <image ... /> element
+  const textContent = text.replace(imageMatch[0], '').trim();
+
+  const blocks: ContentBlock[] = [
+    { type: 'image', source: { type: 'base64', media_type: mimeType, data } },
+  ];
+  if (textContent) {
+    blocks.push({ type: 'text', text: textContent });
+  }
+  return blocks;
+}
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -70,7 +97,7 @@ class MessageStream {
   push(text: string): void {
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: parseMessageContent(text) },
       parent_tool_use_id: null,
       session_id: '',
     });
@@ -142,7 +169,7 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 /**
  * Archive the full transcript to conversations/ before compaction.
  */
-function createPreCompactHook(): HookCallback {
+function createPreCompactHook(assistantName?: string): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preCompact = input as PreCompactHookInput;
     const transcriptPath = preCompact.transcript_path;
@@ -172,7 +199,7 @@ function createPreCompactHook(): HookCallback {
       const filename = `${date}-${name}.md`;
       const filePath = path.join(conversationsDir, filename);
 
-      const markdown = formatTranscriptMarkdown(messages, summary);
+      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
@@ -252,7 +279,7 @@ function parseTranscript(content: string): ParsedMessage[] {
   return messages;
 }
 
-function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null): string {
+function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
   const now = new Date();
   const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
     month: 'short',
@@ -271,7 +298,7 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
   lines.push('');
 
   for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : 'Andy';
+    const sender = msg.role === 'user' ? 'User' : (assistantName || 'Assistant');
     const content = msg.content.length > 2000
       ? msg.content.slice(0, 2000) + '...'
       : msg.content;
@@ -449,7 +476,7 @@ async function runQuery(
         },
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook()] }],
+        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
     }
