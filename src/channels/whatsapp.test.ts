@@ -7,6 +7,7 @@ import { EventEmitter } from 'events';
 vi.mock('../config.js', () => ({
   STORE_DIR: '/tmp/nanoclaw-test-store',
   DATA_DIR: '/tmp/nanoclaw-test-store/data',
+  GROUPS_DIR: '/tmp/test-groups',
   ASSISTANT_NAME: 'Andy',
   ASSISTANT_HAS_OWN_NUMBER: false,
 }));
@@ -26,6 +27,16 @@ vi.mock('../db.js', () => ({
   getLastGroupSync: vi.fn(() => null),
   setLastGroupSync: vi.fn(),
   updateChatName: vi.fn(),
+}));
+
+vi.mock('../image.js', () => ({
+  isImageMessage: vi.fn().mockReturnValue(false),
+  processImage: vi
+    .fn()
+    .mockResolvedValue({
+      content: '[Image: attachments/test.jpg]',
+      relativePath: 'attachments/test.jpg',
+    }),
 }));
 
 // Mock fs
@@ -62,6 +73,7 @@ function createFakeSocket() {
     sendMessage: vi.fn().mockResolvedValue(undefined),
     sendPresenceUpdate: vi.fn().mockResolvedValue(undefined),
     groupFetchAllParticipating: vi.fn().mockResolvedValue({}),
+    updateMediaMessage: vi.fn().mockResolvedValue(undefined),
     end: vi.fn(),
     // Expose the event emitter for triggering events in tests
     _ev: ev,
@@ -88,6 +100,7 @@ vi.mock('@whiskeysockets/baileys', () => {
     fetchLatestWaWebVersion: vi
       .fn()
       .mockResolvedValue({ version: [2, 3000, 0] }),
+    downloadMediaMessage: vi.fn().mockResolvedValue(Buffer.from('image-data')),
     normalizeMessageContent: vi.fn((content: unknown) => content),
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
@@ -101,7 +114,9 @@ vi.mock('@whiskeysockets/baileys', () => {
 });
 
 import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp.js';
+import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
+import { isImageMessage, processImage } from '../image.js';
 
 // --- Test helpers ---
 
@@ -148,6 +163,7 @@ describe('WhatsAppChannel', () => {
   beforeEach(() => {
     fakeSocket = createFakeSocket();
     vi.mocked(getLastGroupSync).mockReturnValue(null);
+    vi.mocked(isImageMessage).mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -503,6 +519,51 @@ describe('WhatsAppChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
         expect.objectContaining({ content: 'Check this photo' }),
+      );
+    });
+
+    it('processes image attachments with upstream attachment format', async () => {
+      vi.mocked(isImageMessage).mockReturnValue(true);
+      vi.mocked(processImage).mockResolvedValueOnce({
+        content: '[Image: attachments/img-123.jpg] Check this photo',
+        relativePath: 'attachments/img-123.jpg',
+      });
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-6b',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            imageMessage: {
+              caption: 'Check this photo',
+              mimetype: 'image/jpeg',
+            },
+          },
+          pushName: 'Diana',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(downloadMediaMessage).toHaveBeenCalled();
+      expect(processImage).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        '/tmp/test-groups/test-group',
+        'Check this photo',
+      );
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: '[Image: attachments/img-123.jpg] Check this photo',
+        }),
       );
     });
 

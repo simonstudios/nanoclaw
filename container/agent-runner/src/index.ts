@@ -28,6 +28,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
 }
 
 interface ContainerOutput {
@@ -51,6 +52,11 @@ interface SessionsIndex {
 type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
+interface QueuedInputMessage {
+  text: string;
+  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
+}
 
 interface SDKUserMessage {
   type: 'user';
@@ -99,47 +105,63 @@ class MessageStream {
   }
 }
 
+function loadImageBlock(
+  imagePath: string,
+  mediaType = 'image/jpeg',
+): ContentBlock | null {
+  try {
+    if (!fs.existsSync(imagePath)) {
+      log(`Image file not found: ${imagePath}`);
+      return null;
+    }
+    const data = fs.readFileSync(imagePath);
+    log(`Added image content block: ${imagePath} (${data.length} bytes)`);
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: mediaType,
+        data: data.toString('base64'),
+      },
+    };
+  } catch (err) {
+    log(
+      `Failed to read image ${imagePath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
 /**
- * Parse XML message text and build multimodal content blocks.
- * Extracts image="..." attributes from <message> tags, reads the files,
- * and creates base64-encoded image content blocks for the Claude API.
+ * Build multimodal content from the text prompt plus either new attachment
+ * references or legacy image="..." XML attributes.
  */
-function buildContentBlocks(xmlText: string): string | ContentBlock[] {
+function buildContentBlocks(
+  text: string,
+  imageAttachments?: Array<{ relativePath: string; mediaType: string }>,
+): string | ContentBlock[] {
+  const blocks: ContentBlock[] = [{ type: 'text', text }];
+
+  for (const img of imageAttachments || []) {
+    const block = loadImageBlock(
+      path.join('/workspace/group', img.relativePath),
+      img.mediaType,
+    );
+    if (block) blocks.push(block);
+  }
+
   const imageRegex = /image="([^"]+)"/g;
-  const matches = [...xmlText.matchAll(imageRegex)];
-
-  if (matches.length === 0) return xmlText;
-
-  const blocks: ContentBlock[] = [{ type: 'text', text: xmlText }];
-
-  for (const match of matches) {
+  for (const match of text.matchAll(imageRegex)) {
     const imagePath = match[1]
       .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"');
-
-    try {
-      if (fs.existsSync(imagePath)) {
-        const data = fs.readFileSync(imagePath);
-        blocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: 'image/jpeg',
-            data: data.toString('base64'),
-          },
-        });
-        log(`Added image content block: ${imagePath} (${data.length} bytes)`);
-      } else {
-        log(`Image file not found: ${imagePath}`);
-      }
-    } catch (err) {
-      log(`Failed to read image ${imagePath}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    const block = loadImageBlock(imagePath);
+    if (block) blocks.push(block);
   }
 
-  return blocks;
+  return blocks.length === 1 ? text : blocks;
 }
 
 async function readStdin(): Promise<string> {
@@ -345,21 +367,26 @@ function shouldClose(): boolean {
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
-function drainIpcInput(): string[] {
+function drainIpcInput(): QueuedInputMessage[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs.readdirSync(IPC_INPUT_DIR)
       .filter(f => f.endsWith('.json'))
       .sort();
 
-    const messages: string[] = [];
+    const messages: QueuedInputMessage[] = [];
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
         if (data.type === 'message' && data.text) {
-          messages.push(data.text);
+          messages.push({
+            text: String(data.text),
+            imageAttachments: Array.isArray(data.imageAttachments)
+              ? data.imageAttachments
+              : undefined,
+          });
         }
       } catch (err) {
         log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
@@ -375,9 +402,9 @@ function drainIpcInput(): string[] {
 
 /**
  * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
+ * Returns the next queued message payload, or null if _close.
  */
-function waitForIpcMessage(): Promise<string | null> {
+function waitForIpcMessage(): Promise<QueuedInputMessage | null> {
   return new Promise((resolve) => {
     const poll = () => {
       if (shouldClose()) {
@@ -386,7 +413,10 @@ function waitForIpcMessage(): Promise<string | null> {
       }
       const messages = drainIpcInput();
       if (messages.length > 0) {
-        resolve(messages.join('\n'));
+        resolve({
+          text: messages.map((m) => m.text).join('\n'),
+          imageAttachments: messages.flatMap((m) => m.imageAttachments || []),
+        });
         return;
       }
       setTimeout(poll, IPC_POLL_MS);
@@ -410,7 +440,7 @@ async function runQuery(
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(buildContentBlocks(prompt));
+  stream.push(buildContentBlocks(prompt, containerInput.imageAttachments));
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -425,9 +455,11 @@ async function runQuery(
       return;
     }
     const messages = drainIpcInput();
-    for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(buildContentBlocks(text));
+    for (const message of messages) {
+      log(`Piping IPC message into active query (${message.text.length} chars)`);
+      stream.push(
+        buildContentBlocks(message.text, message.imageAttachments),
+      );
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -573,13 +605,17 @@ async function main(): Promise<void> {
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
+  let imageAttachments = containerInput.imageAttachments || [];
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
-    prompt += '\n' + pending.join('\n');
+    prompt += '\n' + pending.map((message) => message.text).join('\n');
+    imageAttachments = imageAttachments.concat(
+      pending.flatMap((message) => message.imageAttachments || []),
+    );
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
@@ -588,7 +624,14 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(
+        prompt,
+        sessionId,
+        mcpServerPath,
+        { ...containerInput, imageAttachments },
+        sdkEnv,
+        resumeAt,
+      );
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -616,8 +659,9 @@ async function main(): Promise<void> {
         break;
       }
 
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
+      log(`Got new message (${nextMessage.text.length} chars), starting new query`);
+      prompt = nextMessage.text;
+      imageAttachments = nextMessage.imageAttachments || [];
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

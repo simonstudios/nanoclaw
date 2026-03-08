@@ -11,6 +11,11 @@ interface QueuedTask {
   fn: () => Promise<void>;
 }
 
+export interface QueuedContainerMessage {
+  text: string;
+  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
+}
+
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
 
@@ -157,19 +162,27 @@ export class GroupQueue {
    * Send a follow-up message to the active container via IPC file.
    * Returns true if the message was written, false if no active container.
    */
-  sendMessage(groupJid: string, text: string): boolean {
+  sendMessage(
+    groupJid: string,
+    message: string | QueuedContainerMessage,
+  ): boolean {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder || state.isTaskContainer)
       return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
+    const payload =
+      typeof message === 'string' ? { text: message } : message;
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
       const filepath = path.join(inputDir, filename);
       const tempPath = `${filepath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+      fs.writeFileSync(
+        tempPath,
+        JSON.stringify({ type: 'message', ...payload }),
+      );
       fs.renameSync(tempPath, filepath);
       return true;
     } catch {

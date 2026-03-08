@@ -1,5 +1,4 @@
 import { exec } from 'child_process';
-import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -17,10 +16,11 @@ import makeWASocket, {
 import {
   ASSISTANT_HAS_OWN_NUMBER,
   ASSISTANT_NAME,
-  DATA_DIR,
+  GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
+import { isImageMessage, processImage } from '../image.js';
 import { logger } from '../logger.js';
 import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
 import {
@@ -214,8 +214,7 @@ export class WhatsAppChannel implements Channel {
               normalized.videoMessage?.caption ||
               '';
 
-            let imagePath: string | undefined;
-            if (normalized.imageMessage) {
+            if (isImageMessage(msg)) {
               try {
                 const buffer = (await downloadMediaMessage(
                   msg,
@@ -226,25 +225,14 @@ export class WhatsAppChannel implements Channel {
                     reuploadRequest: this.sock.updateMediaMessage,
                   },
                 )) as Buffer;
-                if (buffer.length <= 5 * 1024 * 1024) {
-                  const hash = crypto.randomBytes(8).toString('hex');
-                  const imagesDir = path.join(DATA_DIR, 'images');
-                  fs.mkdirSync(imagesDir, { recursive: true });
-                  const filePath = path.join(imagesDir, `${hash}.jpg`);
-                  fs.writeFileSync(filePath, buffer);
-                  imagePath = filePath;
-                  logger.info(
-                    { jid: chatJid, size: buffer.length, path: filePath },
-                    'Image downloaded',
-                  );
-                } else {
-                  logger.warn(
-                    { jid: chatJid, size: buffer.length },
-                    'Image too large, skipping (>5MB)',
-                  );
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const caption = normalized.imageMessage?.caption ?? '';
+                const result = await processImage(buffer, groupDir, caption);
+                if (result) {
+                  content = result.content;
                 }
               } catch (err) {
-                logger.warn({ jid: chatJid, err }, 'Failed to download image');
+                logger.warn({ jid: chatJid, err }, 'Image download failed');
               }
             }
 
@@ -262,7 +250,7 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
-            if (!content && !imagePath) continue;
+            if (!content) continue;
 
             const sender = msg.key.participant || msg.key.remoteJid || '';
             const senderName = msg.pushName || sender.split('@')[0];
@@ -285,7 +273,6 @@ export class WhatsAppChannel implements Channel {
               timestamp,
               is_from_me: fromMe,
               is_bot_message: isBotMessage,
-              image_path: imagePath,
             });
           }
         } catch (err) {

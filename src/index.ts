@@ -3,7 +3,6 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
-  DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TIMEZONE,
@@ -43,6 +42,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { parseImageReferences } from './image.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -65,16 +65,6 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
-
-/**
- * Transform host image paths to container paths.
- * Host: data/images/abc.jpg -> Container: /workspace/images/abc.jpg
- */
-function hostToContainerImagePath(hostPath: string): string {
-  const imagesDir = path.join(DATA_DIR, 'images');
-  const rel = path.relative(imagesDir, hostPath);
-  return `/workspace/images/${rel}`;
-}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -183,11 +173,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(
-    missedMessages,
-    TIMEZONE,
-    hostToContainerImagePath,
-  );
+  const prompt = formatMessages(missedMessages, TIMEZONE);
+  const imageAttachments = parseImageReferences(missedMessages);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -219,7 +206,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    imageAttachments,
+    async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -244,7 +236,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  });
+    },
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -276,6 +269,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  imageAttachments: Array<{ relativePath: string; mediaType: string }>,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
@@ -327,6 +321,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        imageAttachments,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -425,13 +420,15 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(
-            messagesToSend,
-            TIMEZONE,
-            hostToContainerImagePath,
-          );
+          const formatted = formatMessages(messagesToSend, TIMEZONE);
+          const imageAttachments = parseImageReferences(messagesToSend);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          if (
+            queue.sendMessage(chatJid, {
+              text: formatted,
+              imageAttachments,
+            })
+          ) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',

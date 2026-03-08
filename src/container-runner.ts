@@ -39,6 +39,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
 }
 
 export interface ContainerOutput {
@@ -159,15 +160,6 @@ function buildVolumeMounts(
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
     readonly: false,
-  });
-
-  // Shared images directory (read-only so agents can view but not delete images)
-  const imagesDir = path.join(DATA_DIR, 'images');
-  fs.mkdirSync(imagesDir, { recursive: true });
-  mounts.push({
-    hostPath: imagesDir,
-    containerPath: '/workspace/images',
-    readonly: true,
   });
 
   // Per-group IPC namespace: each group gets its own IPC directory
