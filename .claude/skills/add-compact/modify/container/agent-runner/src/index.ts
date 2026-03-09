@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -27,7 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
-  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
+  secrets?: Record<string, string>;
 }
 
 interface ContainerOutput {
@@ -48,18 +48,9 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
-type ContentBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
-
-interface QueuedInputMessage {
-  text: string;
-  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
-}
-
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string | ContentBlock[] };
+  message: { role: 'user'; content: string };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -77,10 +68,10 @@ class MessageStream {
   private waiting: (() => void) | null = null;
   private done = false;
 
-  push(content: string | ContentBlock[]): void {
+  push(text: string): void {
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content },
+      message: { role: 'user', content: text },
       parent_tool_use_id: null,
       session_id: '',
     });
@@ -102,65 +93,6 @@ class MessageStream {
       this.waiting = null;
     }
   }
-}
-
-function loadImageBlock(
-  imagePath: string,
-  mediaType = 'image/jpeg',
-): ContentBlock | null {
-  try {
-    if (!fs.existsSync(imagePath)) {
-      log(`Image file not found: ${imagePath}`);
-      return null;
-    }
-    const data = fs.readFileSync(imagePath);
-    log(`Added image content block: ${imagePath} (${data.length} bytes)`);
-    return {
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mediaType,
-        data: data.toString('base64'),
-      },
-    };
-  } catch (err) {
-    log(
-      `Failed to read image ${imagePath}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return null;
-  }
-}
-
-/**
- * Build multimodal content from the text prompt plus either new attachment
- * references or legacy image="..." XML attributes.
- */
-function buildContentBlocks(
-  text: string,
-  imageAttachments?: Array<{ relativePath: string; mediaType: string }>,
-): string | ContentBlock[] {
-  const blocks: ContentBlock[] = [{ type: 'text', text }];
-
-  for (const img of imageAttachments || []) {
-    const block = loadImageBlock(
-      path.join('/workspace/group', img.relativePath),
-      img.mediaType,
-    );
-    if (block) blocks.push(block);
-  }
-
-  const imageRegex = /image="([^"]+)"/g;
-  for (const match of text.matchAll(imageRegex)) {
-    const imagePath = match[1]
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"');
-    const block = loadImageBlock(imagePath);
-    if (block) blocks.push(block);
-  }
-
-  return blocks.length === 1 ? text : blocks;
 }
 
 async function readStdin(): Promise<string> {
@@ -253,6 +185,30 @@ function createPreCompactHook(assistantName?: string): HookCallback {
   };
 }
 
+// Secrets to strip from Bash tool subprocess environments.
+// These are needed by claude-code for API auth but should never
+// be visible to commands Kit runs.
+const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+
+function createSanitizeBashHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: {
+          ...(preInput.tool_input as Record<string, unknown>),
+          command: unsetPrefix + command,
+        },
+      },
+    };
+  };
+}
+
 function sanitizeFilename(summary: string): string {
   return summary
     .toLowerCase()
@@ -342,26 +298,21 @@ function shouldClose(): boolean {
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
-function drainIpcInput(): QueuedInputMessage[] {
+function drainIpcInput(): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs.readdirSync(IPC_INPUT_DIR)
       .filter(f => f.endsWith('.json'))
       .sort();
 
-    const messages: QueuedInputMessage[] = [];
+    const messages: string[] = [];
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
         if (data.type === 'message' && data.text) {
-          messages.push({
-            text: String(data.text),
-            imageAttachments: Array.isArray(data.imageAttachments)
-              ? data.imageAttachments
-              : undefined,
-          });
+          messages.push(data.text);
         }
       } catch (err) {
         log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
@@ -377,9 +328,9 @@ function drainIpcInput(): QueuedInputMessage[] {
 
 /**
  * Wait for a new IPC message or _close sentinel.
- * Returns the next queued message payload, or null if _close.
+ * Returns the messages as a single string, or null if _close.
  */
-function waitForIpcMessage(): Promise<QueuedInputMessage | null> {
+function waitForIpcMessage(): Promise<string | null> {
   return new Promise((resolve) => {
     const poll = () => {
       if (shouldClose()) {
@@ -388,10 +339,7 @@ function waitForIpcMessage(): Promise<QueuedInputMessage | null> {
       }
       const messages = drainIpcInput();
       if (messages.length > 0) {
-        resolve({
-          text: messages.map((m) => m.text).join('\n'),
-          imageAttachments: messages.flatMap((m) => m.imageAttachments || []),
-        });
+        resolve(messages.join('\n'));
         return;
       }
       setTimeout(poll, IPC_POLL_MS);
@@ -415,7 +363,7 @@ async function runQuery(
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(buildContentBlocks(prompt, containerInput.imageAttachments));
+  stream.push(prompt);
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -430,11 +378,9 @@ async function runQuery(
       return;
     }
     const messages = drainIpcInput();
-    for (const message of messages) {
-      log(`Piping IPC message into active query (${message.text.length} chars)`);
-      stream.push(
-        buildContentBlocks(message.text, message.imageAttachments),
-      );
+    for (const text of messages) {
+      log(`Piping IPC message into active query (${text.length} chars)`);
+      stream.push(text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -505,6 +451,7 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
     }
   })) {
@@ -549,6 +496,7 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
+    // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
@@ -560,9 +508,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  // No real secrets exist in the container environment.
+  // Build SDK env: merge secrets into process.env for the SDK only.
+  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
+  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
+    sdkEnv[key] = value;
+  }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
@@ -575,18 +526,114 @@ async function main(): Promise<void> {
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
-  let imageAttachments = containerInput.imageAttachments || [];
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
-    prompt += '\n' + pending.map((message) => message.text).join('\n');
-    imageAttachments = imageAttachments.concat(
-      pending.flatMap((message) => message.imageAttachments || []),
-    );
+    prompt += '\n' + pending.join('\n');
   }
+
+  // --- Slash command handling ---
+  // Only known session slash commands are handled here. This prevents
+  // accidental interception of user prompts that happen to start with '/'.
+  const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
+  const trimmedPrompt = prompt.trim();
+  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(trimmedPrompt);
+
+  if (isSessionSlashCommand) {
+    log(`Handling session command: ${trimmedPrompt}`);
+    let slashSessionId: string | undefined;
+    let compactBoundarySeen = false;
+    let hadError = false;
+    let resultEmitted = false;
+
+    try {
+      for await (const message of query({
+        prompt: trimmedPrompt,
+        options: {
+          cwd: '/workspace/group',
+          resume: sessionId,
+          systemPrompt: undefined,
+          allowedTools: [],
+          env: sdkEnv,
+          permissionMode: 'bypassPermissions' as const,
+          allowDangerouslySkipPermissions: true,
+          settingSources: ['project', 'user'] as const,
+          hooks: {
+            PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+          },
+        },
+      })) {
+        const msgType = message.type === 'system'
+          ? `system/${(message as { subtype?: string }).subtype}`
+          : message.type;
+        log(`[slash-cmd] type=${msgType}`);
+
+        if (message.type === 'system' && message.subtype === 'init') {
+          slashSessionId = message.session_id;
+          log(`Session after slash command: ${slashSessionId}`);
+        }
+
+        // Observe compact_boundary to confirm compaction completed
+        if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+          compactBoundarySeen = true;
+          log('Compact boundary observed — compaction completed');
+        }
+
+        if (message.type === 'result') {
+          const resultSubtype = (message as { subtype?: string }).subtype;
+          const textResult = 'result' in message ? (message as { result?: string }).result : null;
+
+          if (resultSubtype?.startsWith('error')) {
+            hadError = true;
+            writeOutput({
+              status: 'error',
+              result: null,
+              error: textResult || 'Session command failed.',
+              newSessionId: slashSessionId,
+            });
+          } else {
+            writeOutput({
+              status: 'success',
+              result: textResult || 'Conversation compacted.',
+              newSessionId: slashSessionId,
+            });
+          }
+          resultEmitted = true;
+        }
+      }
+    } catch (err) {
+      hadError = true;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      log(`Slash command error: ${errorMsg}`);
+      writeOutput({ status: 'error', result: null, error: errorMsg });
+    }
+
+    log(`Slash command done. compactBoundarySeen=${compactBoundarySeen}, hadError=${hadError}`);
+
+    // Warn if compact_boundary was never observed — compaction may not have occurred
+    if (!hadError && !compactBoundarySeen) {
+      log('WARNING: compact_boundary was not observed. Compaction may not have completed.');
+    }
+
+    // Only emit final session marker if no result was emitted yet and no error occurred
+    if (!resultEmitted && !hadError) {
+      writeOutput({
+        status: 'success',
+        result: compactBoundarySeen
+          ? 'Conversation compacted.'
+          : 'Compaction requested but compact_boundary was not observed.',
+        newSessionId: slashSessionId,
+      });
+    } else if (!hadError) {
+      // Emit session-only marker so host updates session tracking
+      writeOutput({ status: 'success', result: null, newSessionId: slashSessionId });
+    }
+    return;
+  }
+  // --- End slash command handling ---
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
@@ -594,14 +641,7 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(
-        prompt,
-        sessionId,
-        mcpServerPath,
-        { ...containerInput, imageAttachments },
-        sdkEnv,
-        resumeAt,
-      );
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -629,9 +669,8 @@ async function main(): Promise<void> {
         break;
       }
 
-      log(`Got new message (${nextMessage.text.length} chars), starting new query`);
-      prompt = nextMessage.text;
-      imageAttachments = nextMessage.imageAttachments || [];
+      log(`Got new message (${nextMessage.length} chars), starting new query`);
+      prompt = nextMessage;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
