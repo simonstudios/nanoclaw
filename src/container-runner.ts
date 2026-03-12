@@ -26,8 +26,14 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
+
+// Non-secret env vars to forward into containers.
+// These are NOT routed through the credential proxy — they go directly
+// into the container environment so CLI tools (gh, etc.) can use them.
+const containerEnv = readEnvFile(['GH_TOKEN']);
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -231,6 +237,11 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Forward non-secret env vars (e.g. GH_TOKEN for gh CLI)
+  for (const [key, value] of Object.entries(containerEnv)) {
+    args.push('-e', `${key}=${value}`);
   }
 
   // Runtime-specific args for host gateway resolution
