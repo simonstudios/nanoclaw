@@ -63,11 +63,15 @@ Help a user with a customized NanoClaw install safely incorporate upstream chang
 
 This install has the following local customizations that MUST be preserved during any merge. If upstream changes conflict with these, always keep the local version and layer in the upstream fix around it:
 
-1. **Apple Container runtime** — This install uses Apple Container (`container` CLI) instead of Docker. The `CONTAINER_RUNTIME` env var defaults to `container` in `container/build.sh` and runtime handling is defined in `src/container-runtime.ts`. If upstream changes reference `docker`, preserve `container` as the runtime. Do NOT revert to Docker.
+1. **Docker runtime (matches upstream)** — Container runtime files (`src/container-runtime.ts`, `container/Dockerfile`, `container/build.sh`) now match upstream Docker. No special handling needed for these files.
 
-2. **Voice transcription** — Groq Whisper-based voice message transcription has been applied via the `/add-voice-transcription` skill. Check `.nanoclaw/state.yaml` for `voice-transcription` in `applied_skills`. Any upstream changes to the message processing pipeline should preserve the voice transcription hook.
+2. **Local feature additions in `src/container-runner.ts`** — GH_TOKEN forwarding (`readEnvFile`), `imageAttachments` in `ContainerInput`, and `model: 'opus'` in settings.json. If upstream changes conflict, accept upstream first then re-add these.
 
-3. **launchd service** — The service runs via `~/Library/LaunchAgents/com.nanoclaw.plist`, not Docker Compose or systemd.
+3. **Multimodal support in `container/agent-runner/src/index.ts`** — imageAttachments handling that upstream removed. Preserve local version.
+
+4. **Voice transcription** — Groq Whisper-based voice message transcription has been applied via the `/add-voice-transcription` skill. Check `.nanoclaw/state.yaml` for `voice-transcription` in `applied_skills`. Any upstream changes to the message processing pipeline should preserve the voice transcription hook.
+
+5. **launchd service** — The service runs via `~/Library/LaunchAgents/com.nanoclaw.plist`, not Docker Compose or systemd.
 # Step 0: Preflight (stop early if unsafe)
 Run:
 - `git status --porcelain`
@@ -148,7 +152,7 @@ If conflicts occur:
   - Open the file.
   - Resolve only conflict markers.
   - Preserve intentional local customizations.
-  - Preserve the Apple Container runtime, voice transcription, and launchd assumptions described above.
+  - Preserve the local customizations (GH_TOKEN forwarding, imageAttachments, voice transcription, launchd) described above.
   - Incorporate upstream fixes/improvements.
   - Do not refactor surrounding code.
   - `git add <file>`
