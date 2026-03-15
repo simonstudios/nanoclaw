@@ -59,41 +59,6 @@ Help a user with a customized NanoClaw install safely incorporate upstream chang
 - Default to MERGE (one-pass conflict resolution). Offer REBASE as an explicit option.
 - Keep token usage low: rely on `git status`, `git log`, `git diff`, and open only conflicted files.
 
-# Local customizations to preserve
-
-This install has local additions that upstream does not have. During merges, preserve these using the appropriate strategy:
-
-## Files upstream has deleted from core
-Restore with `git checkout HEAD -- <file>` if deleted by a merge:
-- `src/channels/whatsapp.ts`, `src/channels/whatsapp.test.ts` — WhatsApp channel
-- `src/channels/index.ts` — has `import './whatsapp.js'`
-- `src/whatsapp-auth.ts`, `setup/whatsapp-auth.ts` — WhatsApp auth
-- `src/anonymize.ts`, `src/anonymize.test.ts` — Anonymization
-- `src/pii-check.ts`, `src/pii-check.test.ts` — PII detection
-- `src/image.ts`, `src/image.test.ts` — Image reference parsing
-- `src/transcription.ts` — Voice transcription
-
-## Files where upstream only strips our additions
-Restore with `git checkout HEAD -- <file>` — our version already includes upstream's base:
-- `src/container-runner.ts` — GH_TOKEN forwarding (`readEnvFile`), `imageAttachments` in `ContainerInput`, `model: 'opus'`
-- `container/agent-runner/src/index.ts` — Multimodal/imageAttachments support
-- `src/db.ts` — image_path column support
-- `src/types.ts` — image_path field in NewMessage
-- `src/router.ts` — image attribute in message formatting
-- `src/ipc.ts` — deanonymize in IPC output
-- `src/task-scheduler.ts` — anonymize/deanonymize in task execution
-- `src/group-queue.ts` — QueuedContainerMessage with imageAttachments
-- `src/config.ts` — ANONYMIZE_CONFIG_DIR, escapeRegex export
-- `setup/index.ts`, `setup/groups.ts` — WhatsApp setup steps
-- `.env.example`, `.gitignore` — local additions
-
-## Files where both sides evolve (true merge required)
-Do NOT `git checkout HEAD` — resolve conflicts by keeping BOTH upstream additions and local additions:
-- `src/index.ts` — has our anonymize/PII/image logic AND upstream adds new features. Verify both sides present after merge.
-- `package.json`, `package-lock.json` — upstream bumps versions; accept upstream for shared deps.
-
-## Other local configuration
-- **launchd service** — runs via `~/Library/LaunchAgents/com.nanoclaw.plist`, not Docker Compose or systemd.
 # Step 0: Preflight (stop early if unsafe)
 Run:
 - `git status --porcelain`
@@ -173,7 +138,7 @@ If conflicts occur:
 - For each conflicted file:
   - Open the file.
   - Resolve only conflict markers.
-  - Preserve intentional local customizations listed in "Local customizations to preserve" above.
+  - Preserve intentional local customizations.
   - Incorporate upstream fixes/improvements.
   - Do not refactor surrounding code.
   - `git add <file>`
