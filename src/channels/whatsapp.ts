@@ -131,8 +131,9 @@ export class WhatsAppChannel implements Channel {
         this.connected = true;
         logger.info('Connected to WhatsApp');
 
-        // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
-        this.sock.sendPresenceUpdate('available').catch((err) => {
+        // Mark as unavailable so WhatsApp doesn't suppress phone notifications
+        // (messages still arrive via multi-device; typing indicators still work per-chat)
+        this.sock.sendPresenceUpdate('unavailable').catch((err) => {
           logger.warn({ err }, 'Failed to send presence update');
         });
 
@@ -245,7 +246,7 @@ export class WhatsAppChannel implements Channel {
                 fs.mkdirSync(attachDir, { recursive: true });
                 const filename = path.basename(
                   normalized.documentMessage.fileName ||
-                  `doc-${Date.now()}.pdf`,
+                    `doc-${Date.now()}.pdf`,
                 );
                 const filePath = path.join(attachDir, filename);
                 fs.writeFileSync(filePath, buffer as Buffer);
