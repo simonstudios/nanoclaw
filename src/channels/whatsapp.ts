@@ -22,6 +22,15 @@ import {
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { isImageMessage, processImage } from '../image.js';
 import { logger } from '../logger.js';
+
+// Baileys expects a pino-style ILogger with level, child, trace.
+// Wrap our built-in logger to satisfy the interface.
+const baileysLogger = Object.assign({}, logger, {
+  level: 'warn',
+  trace: (dataOrMsg: Record<string, unknown> | string, msg?: string) =>
+    logger.debug(dataOrMsg, msg),
+  child: () => baileysLogger,
+}) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
 import {
   Channel,
@@ -78,10 +87,10 @@ export class WhatsAppChannel implements Channel {
       version,
       auth: {
         creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger),
+        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
       },
       printQRInTerminal: false,
-      logger,
+      logger: baileysLogger,
       browser: Browsers.macOS('Chrome'),
     });
 
@@ -222,7 +231,7 @@ export class WhatsAppChannel implements Channel {
                   'buffer',
                   {},
                   {
-                    logger,
+                    logger: baileysLogger,
                     reuploadRequest: this.sock.updateMediaMessage,
                   },
                 )) as Buffer;
