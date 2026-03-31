@@ -293,26 +293,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Anonymization: load per-group config, apply mappings, optionally run PII check
   const anonConfig = loadAnonymizeConfig(group.folder);
-  let anonPrompt = anonConfig ? anonymize(prompt, anonConfig) : prompt;
   const mediaFailures: MediaCheckFailure[] = [];
 
   const groupDir = anonConfig ? resolveGroupFolderPath(group.folder) : '';
 
+  // Document substitution MUST happen before anonymize() — file paths on disk
+  // use real names (e.g. "James Bond.pdf") which anonymize() would corrupt.
+  let anonPrompt = prompt;
   if (anonConfig) {
+    const pdfResult = await substitutePdfContent(prompt, groupDir, anonConfig);
+    anonPrompt = anonymize(pdfResult.prompt, anonConfig);
+    mediaFailures.push(...pdfResult.failures);
+
     logger.debug(
       { group: group.name, changed: anonPrompt !== prompt },
       'anonymize: mappings applied',
     );
-
-    // Substitute PDF content with anonymized extracted text (deterministic, no Ollama).
-    // If extraction fails, the reference is STRIPPED to prevent container access.
-    const pdfResult = await substitutePdfContent(
-      anonPrompt,
-      groupDir,
-      anonConfig,
-    );
-    anonPrompt = pdfResult.prompt;
-    mediaFailures.push(...pdfResult.failures);
   }
 
   const shouldCheckTextPii = anonConfig?.piiCheck === true;
@@ -743,20 +739,18 @@ async function startMessageLoop(): Promise<void> {
           const imageAttachments = parseImageReferences(messagesToSend);
 
           // Hook C: Anonymize piped messages (container only sees pseudonyms)
+          // Document substitution MUST happen before anonymize() — file paths
+          // on disk use real names which anonymize() would corrupt.
           const pipeAnonConfig = loadAnonymizeConfig(group.folder);
-          let anonFormatted = pipeAnonConfig
-            ? anonymize(formatted, pipeAnonConfig)
-            : formatted;
-
-          // Substitute PDF content with anonymized text (deterministic, no Ollama)
+          let anonFormatted = formatted;
           if (pipeAnonConfig) {
             const pipeGroupDir = resolveGroupFolderPath(group.folder);
             const pdfResult = await substitutePdfContent(
-              anonFormatted,
+              formatted,
               pipeGroupDir,
               pipeAnonConfig,
             );
-            anonFormatted = pdfResult.prompt;
+            anonFormatted = anonymize(pdfResult.prompt, pipeAnonConfig);
           }
 
           if (
