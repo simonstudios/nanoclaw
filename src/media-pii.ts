@@ -13,7 +13,6 @@ const DEFAULT_VISION_MODEL = 'llava:7b';
 const VISION_TIMEOUT_MS = 60_000;
 const MAX_DOC_SIZE = 10 * 1024 * 1024; // 10MB
 
-/** Matches both old [PDF: ...] and new [DOC: ...] reference patterns. */
 /** Matches [DOC: attachments/file.pdf (50KB)] and legacy [PDF: ...] references.
  *  Captures the full path including spaces in filenames. */
 const DOC_REF_SOURCE = String.raw`\[(?:PDF|DOC): (attachments\/[^()\[\]]+?)\s*(?:\(\d+KB\))?\](?:\n?Use: pdf-reader extract [^\n]+)?`;
@@ -70,19 +69,16 @@ export async function extractDocText(docPath: string): Promise<string | null> {
   }
 }
 
-/** @deprecated Use extractDocText instead */
-export const extractPdfText = extractDocText;
-
 /**
  * Check a PDF for PII by extracting text, anonymizing, and running
  * through the Ollama PII checker.
  */
 export async function checkDocPii(
-  pdfPath: string,
+  docPath: string,
   filename: string,
   config: AnonymizeConfig,
 ): Promise<PiiItem[]> {
-  const text = await extractDocText(pdfPath);
+  const text = await extractDocText(docPath);
   if (!text) return [];
 
   const anonymized = anonymize(text, config);
@@ -208,7 +204,7 @@ export async function checkMediaPii(
   const allItems: PiiItem[] = [];
 
   // Collect PDF references
-  for (const ref of collectPdfRefs(messages.map((m) => m.content).join('\n'))) {
+  for (const ref of collectDocRefs(messages.map((m) => m.content).join('\n'))) {
     const fullPath = path.join(groupDir, ref.relativePath);
     const items = await checkDocPii(fullPath, ref.filename, config);
     allItems.push(...items);
@@ -229,7 +225,7 @@ export async function checkMediaPii(
 }
 
 /** Extract PDF reference paths from text using a fresh regex instance. */
-function collectPdfRefs(
+function collectDocRefs(
   text: string,
 ): Array<{ relativePath: string; filename: string; fullMatch: string }> {
   const pattern = new RegExp(DOC_REF_SOURCE, 'g');
@@ -249,7 +245,7 @@ function collectPdfRefs(
   return refs;
 }
 
-export interface PdfSubstitutionResult {
+export interface DocSubstitutionResult {
   prompt: string;
   /** PDFs that could not be extracted — the reference was stripped to prevent
    *  the container from reading the raw file via pdf-reader. */
@@ -264,12 +260,12 @@ export interface PdfSubstitutionResult {
  * If extraction fails, the reference is STRIPPED (not left in place)
  * to prevent the container from reading the raw, unanonymized file.
  */
-export async function substitutePdfContent(
+export async function substituteDocContent(
   prompt: string,
   groupDir: string,
   config: AnonymizeConfig,
-): Promise<PdfSubstitutionResult> {
-  const replacements = collectPdfRefs(prompt);
+): Promise<DocSubstitutionResult> {
+  const replacements = collectDocRefs(prompt);
   if (replacements.length === 0) return { prompt, failures: [] };
 
   let result = prompt;
@@ -280,8 +276,7 @@ export async function substitutePdfContent(
     const filename = path.basename(rep.relativePath);
     const text = await extractDocText(fullPath);
     if (text) {
-      const anonymizedText = anonymize(text, config);
-      const substitution = `[Document content from ${filename}]\n${anonymizedText}\n[End document content]`;
+      const substitution = `[Document content from ${filename}]\n${text}\n[End document content]`;
       result = result.replace(rep.fullMatch, substitution);
     } else {
       // Strip the reference so the container can't read the raw file
@@ -292,7 +287,7 @@ export async function substitutePdfContent(
       failures.push({ filename, reason: 'text extraction failed' });
       logger.warn(
         { filename },
-        'media-pii: PDF reference stripped — extraction failed',
+        'media-pii: document reference stripped — extraction failed',
       );
     }
   }

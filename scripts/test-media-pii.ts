@@ -19,10 +19,10 @@ import {
 import {
   checkImagePii,
   checkMediaPii,
-  checkPdfPii,
+  checkDocPii,
   extractImageText,
-  extractPdfText,
-  substitutePdfContent,
+  extractDocText,
+  substituteDocContent,
 } from '../src/media-pii.js';
 import { checkForPii, formatPiiAlert, PiiItem } from '../src/pii-check.js';
 
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
       p,
       'Report prepared by Kirsty Gelda-Smith for Simon and Olivia',
     );
-    const text = await extractPdfText(p);
+    const text = await extractDocText(p);
     if (!text) {
       fail('Extract', 'returned null');
     } else {
@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   {
     const p = path.join(attachDir, 'unknown-names.pdf');
     createTestPdf(p, 'Referral from Dr Rachel Thompson to Prof James Walker');
-    const items = await checkPdfPii(p, 'unknown-names.pdf', config);
+    const items = await checkDocPii(p, 'unknown-names.pdf', config);
     if (items.length > 0) {
       ok(
         'PII detected',
@@ -201,7 +201,7 @@ async function main(): Promise<void> {
       p,
       'Contact: Dr Sarah Lee, 42 Victoria Road, Manchester M1 2AB. Tel: 0161 234 5678. Email: sarah.lee@nhs.uk. DOB: 15/03/1985.',
     );
-    const items = await checkPdfPii(p, 'mixed-pii.pdf', config);
+    const items = await checkDocPii(p, 'mixed-pii.pdf', config);
     if (items.length > 0) {
       ok(
         'PII detected',
@@ -218,7 +218,7 @@ async function main(): Promise<void> {
   {
     const p = path.join(attachDir, 'clean.pdf');
     createTestPdf(p, 'Luna and Alex went to the park with Ember and Azure');
-    const items = await checkPdfPii(p, 'clean.pdf', config);
+    const items = await checkDocPii(p, 'clean.pdf', config);
     if (items.length === 0) {
       ok('Clean', 'no PII detected in pseudonym-only PDF');
     } else {
@@ -233,7 +233,7 @@ async function main(): Promise<void> {
   {
     const p = path.join(attachDir, 'corrupt.pdf');
     fs.writeFileSync(p, 'this is not a pdf file at all');
-    const text = await extractPdfText(p);
+    const text = await extractDocText(p);
     if (text === null) {
       ok('Graceful failure', 'returned null for corrupt PDF');
     } else {
@@ -264,14 +264,14 @@ async function main(): Promise<void> {
     xref += `trailer<</Size ${offsets.length + 1}/Root 1 0 R>>\nstartxref\n${xrefOffset}\n%%EOF\n`;
     fs.writeFileSync(p, body + xref);
 
-    const text = await extractPdfText(p);
+    const text = await extractDocText(p);
     if (!text || text.trim() === '') {
       ok('Empty PDF', 'returned null or empty string');
     } else {
       fail('Empty PDF', `expected empty but got: "${text.slice(0, 50)}"`);
     }
 
-    const items = await checkPdfPii(p, 'empty.pdf', config);
+    const items = await checkDocPii(p, 'empty.pdf', config);
     if (items.length === 0) {
       ok('PII check on empty', 'no false positives');
     } else {
@@ -289,9 +289,9 @@ async function main(): Promise<void> {
     createTestPdf(p, 'Meeting notes by Simon about Olivia');
     const prompt =
       'Message:\n[PDF: attachments/sub-single.pdf (1KB)]\nUse: pdf-reader extract attachments/sub-single.pdf';
-    const result = await substitutePdfContent(prompt, tmpDir, config);
+    const { prompt: result } = await substituteDocContent(prompt, tmpDir, config);
 
-    if (result.includes('[PDF content from sub-single.pdf]')) {
+    if (result.includes('[Document content from sub-single.pdf]')) {
       ok('Reference replaced');
     } else {
       fail('Reference replaced', 'still contains original reference');
@@ -301,15 +301,17 @@ async function main(): Promise<void> {
     } else {
       fail('pdf-reader instruction', 'still present');
     }
-    if (result.includes('Alex') && result.includes('Luna')) {
-      ok('Names anonymized', '"Simon"→"Alex", "Olivia"→"Luna"');
+    // substituteDocContent extracts raw text; anonymize() runs separately
+    if (result.includes('Simon') && result.includes('Olivia')) {
+      ok('Raw text extracted', 'contains original names (anonymize runs after)');
     } else {
-      fail('Names anonymized', `result: "${result}"`);
+      fail('Raw text extracted', `result: "${result}"`);
     }
-    if (!result.includes('Simon') && !result.includes('Olivia')) {
-      ok('No real names in output');
+    const anonymized = anonymize(result, config);
+    if (anonymized.includes('Alex') && anonymized.includes('Luna')) {
+      ok('Names anonymized after substitute', '"Simon"→"Alex", "Olivia"→"Luna"');
     } else {
-      fail('Real name leakage', `result contains unmapped names`);
+      fail('Names anonymized', `anonymized: "${anonymized}"`);
     }
   }
 
@@ -327,11 +329,11 @@ async function main(): Promise<void> {
       '[PDF: attachments/multi-2.pdf (1KB)]',
       'Use: pdf-reader extract attachments/multi-2.pdf',
     ].join('\n');
-    const result = await substitutePdfContent(prompt, tmpDir, config);
+    const { prompt: result } = await substituteDocContent(prompt, tmpDir, config);
 
     const hasBoth =
-      result.includes('[PDF content from multi-1.pdf]') &&
-      result.includes('[PDF content from multi-2.pdf]');
+      result.includes('[Document content from multi-1.pdf]') &&
+      result.includes('[Document content from multi-2.pdf]');
     if (hasBoth) {
       ok('Both PDFs substituted');
     } else {
@@ -348,7 +350,7 @@ async function main(): Promise<void> {
   {
     const prompt =
       '[PDF: attachments/corrupt.pdf (1KB)]\nUse: pdf-reader extract attachments/corrupt.pdf';
-    const result = await substitutePdfContent(prompt, tmpDir, config);
+    const { prompt: result } = await substituteDocContent(prompt, tmpDir, config);
     if (result === prompt) {
       ok('Fallback', 'original reference preserved when extraction fails');
     } else {
@@ -359,7 +361,7 @@ async function main(): Promise<void> {
   heading('B4. Prompt with no PDF references (passthrough)');
   {
     const prompt = 'Hello Luna, how are you today?';
-    const result = await substitutePdfContent(prompt, tmpDir, config);
+    const { prompt: result } = await substituteDocContent(prompt, tmpDir, config);
     if (result === prompt) {
       ok('Passthrough', 'prompt unchanged when no PDF references');
     } else {
@@ -708,8 +710,8 @@ async function main(): Promise<void> {
     }
 
     console.log('  Step 2: Substitute PDF content...');
-    const withPdfs = await substitutePdfContent(anonPrompt, tmpDir, config);
-    if (withPdfs.includes('[PDF content from')) {
+    const { prompt: withPdfs } = await substituteDocContent(anonPrompt, tmpDir, config);
+    if (withPdfs.includes('[Document content from')) {
       ok('PDF substituted');
     } else {
       fail('PDF substituted', 'reference not replaced');

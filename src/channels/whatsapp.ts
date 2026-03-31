@@ -26,8 +26,6 @@ import { logger } from '../logger.js';
 const SUPPORTED_DOC_MIMES = new Set([
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-  'application/msword', // .doc
-  'application/vnd.oasis.opendocument.text', // .odt
   'text/plain', // .txt
 ]);
 
@@ -35,8 +33,6 @@ const DOC_MIME_EXTENSIONS: Record<string, string> = {
   'application/pdf': '.pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
     '.docx',
-  'application/msword': '.doc',
-  'application/vnd.oasis.opendocument.text': '.odt',
   'text/plain': '.txt',
 };
 

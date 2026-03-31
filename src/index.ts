@@ -72,7 +72,7 @@ import {
 import {
   checkImagePii,
   MediaCheckFailure,
-  substitutePdfContent,
+  substituteDocContent,
   warmupVisionModel,
 } from './media-pii.js';
 import {
@@ -301,7 +301,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // use real names (e.g. "James Bond.pdf") which anonymize() would corrupt.
   let anonPrompt = prompt;
   if (anonConfig) {
-    const pdfResult = await substitutePdfContent(prompt, groupDir, anonConfig);
+    const pdfResult = await substituteDocContent(prompt, groupDir, anonConfig);
     anonPrompt = anonymize(pdfResult.prompt, anonConfig);
     mediaFailures.push(...pdfResult.failures);
 
@@ -745,7 +745,7 @@ async function startMessageLoop(): Promise<void> {
           let anonFormatted = formatted;
           if (pipeAnonConfig) {
             const pipeGroupDir = resolveGroupFolderPath(group.folder);
-            const pdfResult = await substitutePdfContent(
+            const pdfResult = await substituteDocContent(
               formatted,
               pipeGroupDir,
               pipeAnonConfig,

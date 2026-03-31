@@ -27,7 +27,7 @@ import {
   checkMediaPii,
   checkDocPii,
   extractDocText,
-  substitutePdfContent,
+  substituteDocContent,
   warmupVisionModel,
 } from './media-pii.js';
 
@@ -237,20 +237,20 @@ describe('checkImagePii', () => {
   });
 });
 
-describe('substitutePdfContent', () => {
+describe('substituteDocContent', () => {
   it('replaces PDF reference with anonymized extracted text', async () => {
     mockGetText.mockResolvedValue({ text: 'Report about Olivia by Simon' });
 
     const prompt =
       'User sent:\n[PDF: attachments/report.pdf (50KB)]\nUse: pdf-reader extract attachments/report.pdf';
-    const { prompt: result, failures } = await substitutePdfContent(
+    const { prompt: result, failures } = await substituteDocContent(
       prompt,
       groupDir,
       baseCfg,
     );
 
     expect(result).toContain('[Document content from report.pdf]');
-    expect(result).toContain('Report about Luna by Alex');
+    expect(result).toContain('Report about Olivia by Simon');
     expect(result).toContain('[End document content]');
     expect(result).not.toContain('pdf-reader');
     expect(failures).toHaveLength(0);
@@ -258,7 +258,7 @@ describe('substitutePdfContent', () => {
 
   it('leaves prompt unchanged when no PDF references exist', async () => {
     const prompt = 'Hello Luna, how are you?';
-    const { prompt: result, failures } = await substitutePdfContent(
+    const { prompt: result, failures } = await substituteDocContent(
       prompt,
       groupDir,
       baseCfg,
@@ -273,7 +273,7 @@ describe('substitutePdfContent', () => {
 
     const prompt =
       '[PDF: attachments/bad.pdf (10KB)]\nUse: pdf-reader extract attachments/bad.pdf';
-    const { prompt: result, failures } = await substitutePdfContent(
+    const { prompt: result, failures } = await substituteDocContent(
       prompt,
       groupDir,
       baseCfg,
@@ -302,13 +302,13 @@ describe('substitutePdfContent', () => {
       'Use: pdf-reader extract attachments/second.pdf',
     ].join('\n');
 
-    const { prompt: result } = await substitutePdfContent(
+    const { prompt: result } = await substituteDocContent(
       prompt,
       groupDir,
       baseCfg,
     );
-    expect(result).toContain('First doc by Luna');
-    expect(result).toContain('Second doc by Alex');
+    expect(result).toContain('First doc by Olivia');
+    expect(result).toContain('Second doc by Simon');
     expect(result).toContain('Some text in between');
   });
 });
