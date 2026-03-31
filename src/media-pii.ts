@@ -300,7 +300,7 @@ export async function substituteDocContent(
  * directory that is NOT mounted into the container. This prevents the agent
  * from reading the raw unanonymized file via the filesystem.
  */
-function quarantineFile(filePath: string, groupDir: string): void {
+export function quarantineFile(filePath: string, groupDir: string): void {
   try {
     if (!fs.existsSync(filePath)) return;
     const groupName = path.basename(groupDir);

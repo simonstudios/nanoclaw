@@ -19,6 +19,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { anonymize, deanonymize, loadAnonymizeConfig } from './anonymize.js';
+import { substituteDocContent } from './media-pii.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
@@ -148,11 +149,19 @@ async function runTask(
     })),
   );
 
-  // Hook D: Anonymize task prompt and de-anonymize output
+  // Hook D: Anonymize task prompt and de-anonymize output.
+  // Also substitute document references (extracts text, quarantines raw files).
   const anonConfig = loadAnonymizeConfig(task.group_folder);
-  const taskPrompt = anonConfig
-    ? anonymize(task.prompt, anonConfig)
-    : task.prompt;
+  let taskPrompt = task.prompt;
+  if (anonConfig) {
+    const groupDir = resolveGroupFolderPath(task.group_folder);
+    const docResult = await substituteDocContent(
+      task.prompt,
+      groupDir,
+      anonConfig,
+    );
+    taskPrompt = anonymize(docResult.prompt, anonConfig);
+  }
 
   let result: string | null = null;
   let error: string | null = null;
