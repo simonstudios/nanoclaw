@@ -350,11 +350,20 @@ async function main(): Promise<void> {
   {
     const prompt =
       '[PDF: attachments/corrupt.pdf (1KB)]\nUse: pdf-reader extract attachments/corrupt.pdf';
-    const { prompt: result } = await substituteDocContent(prompt, tmpDir, config);
-    if (result === prompt) {
-      ok('Fallback', 'original reference preserved when extraction fails');
+    const { prompt: result, failures } = await substituteDocContent(
+      prompt,
+      tmpDir,
+      config,
+    );
+    if (result.includes('content withheld') && !result.includes('pdf-reader')) {
+      ok('Fail-closed', 'reference stripped and replaced with withheld notice');
     } else {
-      fail('Fallback', 'prompt was modified despite extraction failure');
+      fail('Fail-closed', 'reference not stripped on extraction failure');
+    }
+    if (failures.length === 1 && failures[0].filename === 'corrupt.pdf') {
+      ok('Failure reported', 'corrupt.pdf in failures array');
+    } else {
+      fail('Failure reported', `expected 1 failure, got ${failures.length}`);
     }
   }
 
