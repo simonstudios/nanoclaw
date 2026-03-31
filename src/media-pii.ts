@@ -14,7 +14,9 @@ const VISION_TIMEOUT_MS = 60_000;
 const MAX_DOC_SIZE = 10 * 1024 * 1024; // 10MB
 
 /** Matches both old [PDF: ...] and new [DOC: ...] reference patterns. */
-const DOC_REF_SOURCE = String.raw`\[(?:PDF|DOC): (attachments\/[^\s)]+)(?: \(\d+KB\))?\](?:\n?Use: pdf-reader extract [^\n]+)?`;
+/** Matches [DOC: attachments/file.pdf (50KB)] and legacy [PDF: ...] references.
+ *  Captures the full path including spaces in filenames. */
+const DOC_REF_SOURCE = String.raw`\[(?:PDF|DOC): (attachments\/[^()\[\]]+?)\s*(?:\(\d+KB\))?\](?:\n?Use: pdf-reader extract [^\n]+)?`;
 
 /**
  * Extract text from a document file (PDF, Word, or plain text).
