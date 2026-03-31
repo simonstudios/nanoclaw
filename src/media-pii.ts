@@ -5,6 +5,7 @@ import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
 
 import { anonymize, AnonymizeConfig } from './anonymize.js';
+import { DATA_DIR } from './config.js';
 import { IMAGE_REF_SOURCE, parseImageReferences } from './image.js';
 import { logger } from './logger.js';
 import { checkForPii, OLLAMA_URL, PiiItem } from './pii-check.js';
@@ -279,20 +280,52 @@ export async function substituteDocContent(
       const substitution = `[Document content from ${filename}]\n${text}\n[End document content]`;
       result = result.replace(rep.fullMatch, substitution);
     } else {
-      // Strip the reference so the container can't read the raw file
       result = result.replace(
         rep.fullMatch,
         `[Document: ${filename} — could not extract text for PII check, content withheld]`,
       );
       failures.push({ filename, reason: 'text extraction failed' });
-      logger.warn(
-        { filename },
-        'media-pii: document reference stripped — extraction failed',
-      );
     }
+
+    // Quarantine: move the raw file out of the container-accessible directory
+    // so the agent cannot read the original unanonymized content via filesystem.
+    quarantineFile(fullPath, groupDir);
   }
 
   return { prompt: result, failures };
+}
+
+/**
+ * Move a file from the container-accessible group directory to a quarantine
+ * directory that is NOT mounted into the container. This prevents the agent
+ * from reading the raw unanonymized file via the filesystem.
+ */
+function quarantineFile(filePath: string, groupDir: string): void {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const groupName = path.basename(groupDir);
+    const quarantineDir = path.join(DATA_DIR, 'quarantine', groupName);
+    fs.mkdirSync(quarantineDir, { recursive: true });
+    const dest = path.join(quarantineDir, path.basename(filePath));
+    fs.renameSync(filePath, dest);
+    logger.info(
+      { from: filePath, to: dest },
+      'media-pii: document quarantined — removed from container-accessible path',
+    );
+  } catch (err) {
+    logger.warn(
+      { err, filePath },
+      'media-pii: failed to quarantine file — attempting delete',
+    );
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      logger.error(
+        { filePath },
+        'media-pii: CRITICAL — could not remove raw file from container path',
+      );
+    }
+  }
 }
 
 /**
