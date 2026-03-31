@@ -23,6 +23,23 @@ import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { isImageMessage, processImage } from '../image.js';
 import { logger } from '../logger.js';
 
+const SUPPORTED_DOC_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'application/msword', // .doc
+  'application/vnd.oasis.opendocument.text', // .odt
+  'text/plain', // .txt
+]);
+
+const DOC_MIME_EXTENSIONS: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+    '.docx',
+  'application/msword': '.doc',
+  'application/vnd.oasis.opendocument.text': '.odt',
+  'text/plain': '.txt',
+};
+
 // Baileys expects a pino-style ILogger with level, child, trace.
 // Wrap our built-in logger to satisfy the interface.
 const baileysLogger = Object.assign({}, logger, {
@@ -246,31 +263,36 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
-            // PDF attachment handling
-            if (normalized?.documentMessage?.mimetype === 'application/pdf') {
+            // Document attachment handling (PDF, Word, etc.)
+            const docMsg = normalized?.documentMessage;
+            const docMime = docMsg?.mimetype;
+            if (docMsg && docMime && SUPPORTED_DOC_MIMES.has(docMime)) {
               try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {});
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const attachDir = path.join(groupDir, 'attachments');
                 fs.mkdirSync(attachDir, { recursive: true });
+                const ext =
+                  DOC_MIME_EXTENSIONS[docMime] ||
+                  path.extname(docMsg.fileName || '') ||
+                  '.bin';
                 const filename = path.basename(
-                  normalized.documentMessage.fileName ||
-                    `doc-${Date.now()}.pdf`,
+                  docMsg.fileName || `doc-${Date.now()}${ext}`,
                 );
                 const filePath = path.join(attachDir, filename);
                 fs.writeFileSync(filePath, buffer as Buffer);
                 const sizeKB = Math.round((buffer as Buffer).length / 1024);
-                const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
-                const caption = normalized.documentMessage.caption || '';
-                content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+                const docRef = `[DOC: attachments/${filename} (${sizeKB}KB)]`;
+                const caption = docMsg.caption || '';
+                content = caption ? `${caption}\n\n${docRef}` : docRef;
                 logger.info(
-                  { jid: chatJid, filename },
-                  'Downloaded PDF attachment',
+                  { jid: chatJid, filename, mime: docMime },
+                  'Downloaded document attachment',
                 );
               } catch (err) {
                 logger.warn(
                   { err, jid: chatJid },
-                  'Failed to download PDF attachment',
+                  'Failed to download document attachment',
                 );
               }
             }

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
 
 import { anonymize, AnonymizeConfig } from './anonymize.js';
@@ -10,56 +11,76 @@ import { checkForPii, OLLAMA_URL, PiiItem } from './pii-check.js';
 
 const DEFAULT_VISION_MODEL = 'llava:7b';
 const VISION_TIMEOUT_MS = 60_000;
-const MAX_PDF_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_DOC_SIZE = 10 * 1024 * 1024; // 10MB
 
-const PDF_REF_SOURCE = String.raw`\[PDF: (attachments\/[^\s)]+)(?: \(\d+KB\))?\]\n?(?:Use: pdf-reader extract [^\n]+)?`;
+/** Matches both old [PDF: ...] and new [DOC: ...] reference patterns. */
+const DOC_REF_SOURCE = String.raw`\[(?:PDF|DOC): (attachments\/[^\s)]+)(?: \(\d+KB\))?\](?:\n?Use: pdf-reader extract [^\n]+)?`;
 
 /**
- * Extract text from a PDF file using pdf-parse.
- * Returns null on error (password-protected, corrupt, too large).
+ * Extract text from a document file (PDF, Word, or plain text).
+ * Returns null on error (password-protected, corrupt, too large, unsupported).
  */
-export async function extractPdfText(pdfPath: string): Promise<string | null> {
+export async function extractDocText(docPath: string): Promise<string | null> {
   try {
-    const stat = fs.statSync(pdfPath);
-    if (stat.size > MAX_PDF_SIZE) {
+    const stat = fs.statSync(docPath);
+    if (stat.size > MAX_DOC_SIZE) {
       logger.warn(
-        { path: pdfPath, sizeBytes: stat.size },
-        'media-pii: PDF too large, skipping extraction',
+        { path: docPath, sizeBytes: stat.size },
+        'media-pii: document too large, skipping extraction',
       );
       return null;
     }
 
-    const buffer = fs.readFileSync(pdfPath);
-    const parser = new PDFParse({ data: new Uint8Array(buffer) });
-    try {
-      const result = await parser.getText();
-      // Strip pdf-parse pagination footers like "-- 1 of 3 --"
-      const cleaned = (result.text || '')
-        .replace(/--\s*\d+\s*of\s*\d+\s*--/g, '')
-        .trim();
-      return cleaned || null;
-    } finally {
-      await parser.destroy();
+    const ext = path.extname(docPath).toLowerCase();
+    const buffer = fs.readFileSync(docPath);
+
+    if (ext === '.pdf') {
+      const parser = new PDFParse({ data: new Uint8Array(buffer) });
+      try {
+        const result = await parser.getText();
+        // Strip pdf-parse pagination footers like "-- 1 of 3 --"
+        const cleaned = (result.text || '')
+          .replace(/--\s*\d+\s*of\s*\d+\s*--/g, '')
+          .trim();
+        return cleaned || null;
+      } finally {
+        await parser.destroy();
+      }
     }
+
+    if (ext === '.docx') {
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value.trim() || null;
+    }
+
+    if (ext === '.txt') {
+      return buffer.toString('utf-8').trim() || null;
+    }
+
+    logger.warn({ path: docPath, ext }, 'media-pii: unsupported document type');
+    return null;
   } catch (err) {
     logger.warn(
-      { err, path: pdfPath },
-      'media-pii: failed to extract PDF text',
+      { err, path: docPath },
+      'media-pii: failed to extract document text',
     );
     return null;
   }
 }
 
+/** @deprecated Use extractDocText instead */
+export const extractPdfText = extractDocText;
+
 /**
  * Check a PDF for PII by extracting text, anonymizing, and running
  * through the Ollama PII checker.
  */
-export async function checkPdfPii(
+export async function checkDocPii(
   pdfPath: string,
   filename: string,
   config: AnonymizeConfig,
 ): Promise<PiiItem[]> {
-  const text = await extractPdfText(pdfPath);
+  const text = await extractDocText(pdfPath);
   if (!text) return [];
 
   const anonymized = anonymize(text, config);
@@ -187,7 +208,7 @@ export async function checkMediaPii(
   // Collect PDF references
   for (const ref of collectPdfRefs(messages.map((m) => m.content).join('\n'))) {
     const fullPath = path.join(groupDir, ref.relativePath);
-    const items = await checkPdfPii(fullPath, ref.filename, config);
+    const items = await checkDocPii(fullPath, ref.filename, config);
     allItems.push(...items);
   }
 
@@ -209,7 +230,7 @@ export async function checkMediaPii(
 function collectPdfRefs(
   text: string,
 ): Array<{ relativePath: string; filename: string; fullMatch: string }> {
-  const pattern = new RegExp(PDF_REF_SOURCE, 'g');
+  const pattern = new RegExp(DOC_REF_SOURCE, 'g');
   const refs: Array<{
     relativePath: string;
     filename: string;
@@ -234,10 +255,11 @@ export interface PdfSubstitutionResult {
 }
 
 /**
- * Replace [PDF: ...] references in the prompt with anonymized extracted text.
+ * Replace [DOC: ...] and [PDF: ...] references in the prompt with anonymized
+ * extracted text. Supports PDF, Word (.docx), and plain text files.
  * This is deterministic (no Ollama calls) and safe for the streaming path.
  *
- * If extraction fails for a PDF, its reference is STRIPPED (not left in place)
+ * If extraction fails, the reference is STRIPPED (not left in place)
  * to prevent the container from reading the raw, unanonymized file.
  */
 export async function substitutePdfContent(
@@ -254,16 +276,16 @@ export async function substitutePdfContent(
   for (const rep of replacements) {
     const fullPath = path.join(groupDir, rep.relativePath);
     const filename = path.basename(rep.relativePath);
-    const text = await extractPdfText(fullPath);
+    const text = await extractDocText(fullPath);
     if (text) {
       const anonymizedText = anonymize(text, config);
-      const substitution = `[PDF content from ${filename}]\n${anonymizedText}\n[End PDF content]`;
+      const substitution = `[Document content from ${filename}]\n${anonymizedText}\n[End document content]`;
       result = result.replace(rep.fullMatch, substitution);
     } else {
-      // Strip the reference so the container can't read the raw PDF
+      // Strip the reference so the container can't read the raw file
       result = result.replace(
         rep.fullMatch,
-        `[PDF: ${filename} — could not extract text for PII check, content withheld]`,
+        `[Document: ${filename} — could not extract text for PII check, content withheld]`,
       );
       failures.push({ filename, reason: 'text extraction failed' });
       logger.warn(

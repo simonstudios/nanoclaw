@@ -15,11 +15,18 @@ vi.mock('pdf-parse', () => {
   return { PDFParse: MockPDFParse };
 });
 
+const mockExtractRawText = vi.fn();
+vi.mock('mammoth', () => ({
+  default: {
+    extractRawText: (...args: unknown[]) => mockExtractRawText(...args),
+  },
+}));
+
 import {
   checkImagePii,
   checkMediaPii,
-  checkPdfPii,
-  extractPdfText,
+  checkDocPii,
+  extractDocText,
   substitutePdfContent,
   warmupVisionModel,
 } from './media-pii.js';
@@ -49,13 +56,14 @@ afterEach(() => {
   mockFetch.mockReset();
   mockGetText.mockReset();
   mockDestroy.mockReset();
+  mockExtractRawText.mockReset();
 });
 
-describe('extractPdfText', () => {
+describe('extractDocText', () => {
   it('returns extracted text from a PDF', async () => {
     mockGetText.mockResolvedValue({ text: 'Hello World' });
 
-    const result = await extractPdfText('/tmp/test.pdf');
+    const result = await extractDocText('/tmp/test.pdf');
     expect(result).toBe('Hello World');
   });
 
@@ -64,7 +72,7 @@ describe('extractPdfText', () => {
       size: 11 * 1024 * 1024,
     } as fs.Stats);
 
-    const result = await extractPdfText('/tmp/large.pdf');
+    const result = await extractDocText('/tmp/large.pdf');
     expect(result).toBeNull();
     expect(mockGetText).not.toHaveBeenCalled();
   });
@@ -72,19 +80,19 @@ describe('extractPdfText', () => {
   it('returns null when pdf-parse throws', async () => {
     mockGetText.mockRejectedValue(new Error('encrypted'));
 
-    const result = await extractPdfText('/tmp/encrypted.pdf');
+    const result = await extractDocText('/tmp/encrypted.pdf');
     expect(result).toBeNull();
   });
 
   it('returns null when pdf has no text', async () => {
     mockGetText.mockResolvedValue({ text: '' });
 
-    const result = await extractPdfText('/tmp/empty.pdf');
+    const result = await extractDocText('/tmp/empty.pdf');
     expect(result).toBeNull();
   });
 });
 
-describe('checkPdfPii', () => {
+describe('checkDocPii', () => {
   it('detects PII in PDF text and tags with source', async () => {
     mockGetText.mockResolvedValue({
       text: 'Report by Claire Smith about the case',
@@ -99,7 +107,7 @@ describe('checkPdfPii', () => {
       }),
     });
 
-    const items = await checkPdfPii('/tmp/report.pdf', 'report.pdf', baseCfg);
+    const items = await checkDocPii('/tmp/report.pdf', 'report.pdf', baseCfg);
     expect(items).toHaveLength(1);
     expect(items[0].text).toBe('Claire Smith');
     expect(items[0].source).toBe('report.pdf');
@@ -109,7 +117,7 @@ describe('checkPdfPii', () => {
   it('returns empty array when PDF extraction fails', async () => {
     mockGetText.mockRejectedValue(new Error('corrupt'));
 
-    const items = await checkPdfPii('/tmp/bad.pdf', 'bad.pdf', baseCfg);
+    const items = await checkDocPii('/tmp/bad.pdf', 'bad.pdf', baseCfg);
     expect(items).toHaveLength(0);
   });
 
@@ -123,7 +131,7 @@ describe('checkPdfPii', () => {
       }),
     });
 
-    const items = await checkPdfPii('/tmp/clean.pdf', 'clean.pdf', baseCfg);
+    const items = await checkDocPii('/tmp/clean.pdf', 'clean.pdf', baseCfg);
     expect(items).toHaveLength(0);
   });
 });
@@ -241,9 +249,9 @@ describe('substitutePdfContent', () => {
       baseCfg,
     );
 
-    expect(result).toContain('[PDF content from report.pdf]');
+    expect(result).toContain('[Document content from report.pdf]');
     expect(result).toContain('Report about Luna by Alex');
-    expect(result).toContain('[End PDF content]');
+    expect(result).toContain('[End document content]');
     expect(result).not.toContain('pdf-reader');
     expect(failures).toHaveLength(0);
   });
