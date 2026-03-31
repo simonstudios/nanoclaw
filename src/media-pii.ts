@@ -5,7 +5,7 @@ import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
 
 import { anonymize, AnonymizeConfig } from './anonymize.js';
-import { parseImageReferences } from './image.js';
+import { IMAGE_REF_SOURCE, parseImageReferences } from './image.js';
 import { logger } from './logger.js';
 import { checkForPii, OLLAMA_URL, PiiItem } from './pii-check.js';
 
@@ -293,6 +293,20 @@ export async function substituteDocContent(
   }
 
   return { prompt: result, failures };
+}
+
+/**
+ * Returns true if any message contains document or image references
+ * that require PII checking before being sent to the container.
+ */
+export function hasMediaReferences(
+  messages: Array<{ content: string }>,
+): boolean {
+  const docPattern = new RegExp(DOC_REF_SOURCE);
+  const imgPattern = new RegExp(IMAGE_REF_SOURCE);
+  return messages.some(
+    (m) => docPattern.test(m.content) || imgPattern.test(m.content),
+  );
 }
 
 /**

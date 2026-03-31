@@ -71,6 +71,7 @@ import {
 } from './pii-check.js';
 import {
   checkImagePii,
+  hasMediaReferences,
   MediaCheckFailure,
   substituteDocContent,
   warmupVisionModel,
@@ -738,10 +739,25 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend, TIMEZONE);
           const imageAttachments = parseImageReferences(messagesToSend);
 
+          // If messages contain documents or images AND media PII checking
+          // is enabled, do NOT pipe — route to the batch path which runs
+          // the full PII check. The streaming path cannot safely skip this.
+          const pipeAnonConfig = loadAnonymizeConfig(group.folder);
+          const mediaPiiEnabled =
+            pipeAnonConfig &&
+            (pipeAnonConfig.mediaPiiCheck ?? pipeAnonConfig.piiCheck);
+          if (mediaPiiEnabled && hasMediaReferences(messagesToSend)) {
+            logger.info(
+              { chatJid },
+              'Media detected in piped message — routing to batch path for PII check',
+            );
+            queue.enqueueMessageCheck(chatJid);
+            continue;
+          }
+
           // Hook C: Anonymize piped messages (container only sees pseudonyms)
           // Document substitution MUST happen before anonymize() — file paths
           // on disk use real names which anonymize() would corrupt.
-          const pipeAnonConfig = loadAnonymizeConfig(group.folder);
           let anonFormatted = formatted;
           if (pipeAnonConfig) {
             const pipeGroupDir = resolveGroupFolderPath(group.folder);
