@@ -106,6 +106,10 @@ const queue = new GroupQueue();
 // PII-check pending messages: held until user approves/skips
 interface PendingAnon {
   anonPrompt: string;
+  /** Raw prompt after document substitution but BEFORE anonymize().
+   *  Stored so we can re-anonymize with updated mappings after approval
+   *  without needing to re-extract documents (which are quarantined). */
+  rawSubstitutedPrompt: string;
   imageAttachments: Array<{ relativePath: string; mediaType: string }>;
   piiResult: PiiResult;
   anonConfig: AnonymizeConfig;
@@ -298,11 +302,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const groupDir = anonConfig ? resolveGroupFolderPath(group.folder) : '';
 
+  const shouldCheckTextPii = anonConfig?.piiCheck === true;
+  const shouldCheckMediaPii =
+    (anonConfig?.mediaPiiCheck ?? anonConfig?.piiCheck) === true;
+
   // Document substitution MUST happen before anonymize() — file paths on disk
   // use real names (e.g. "James Bond.pdf") which anonymize() would corrupt.
+  // After PII approval, documents are already quarantined from the first pass.
+  // Use the cached raw substituted prompt so we don't need to re-extract.
+  let rawSubstitutedPrompt = prompt;
   let anonPrompt = prompt;
-  if (anonConfig) {
+
+  if ((shouldCheckTextPii || shouldCheckMediaPii) && piiApproved.has(chatJid)) {
+    piiApproved.delete(chatJid);
+    const cached = pendingAnon.get(chatJid);
+    if (cached) {
+      // Re-anonymize with updated config (user may have approved new mappings)
+      const freshConfig = loadAnonymizeConfig(group.folder);
+      rawSubstitutedPrompt = cached.rawSubstitutedPrompt;
+      anonPrompt = freshConfig
+        ? anonymize(rawSubstitutedPrompt, freshConfig)
+        : rawSubstitutedPrompt;
+      imageAttachments.length = 0;
+      imageAttachments.push(...cached.imageAttachments);
+      pendingAnon.delete(chatJid);
+    }
+  } else if (anonConfig) {
     const pdfResult = await substituteDocContent(prompt, groupDir, anonConfig);
+    rawSubstitutedPrompt = pdfResult.prompt;
     anonPrompt = anonymize(pdfResult.prompt, anonConfig);
     mediaFailures.push(...pdfResult.failures);
 
@@ -312,12 +339,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
   }
 
-  const shouldCheckTextPii = anonConfig?.piiCheck === true;
-  const shouldCheckMediaPii =
-    (anonConfig?.mediaPiiCheck ?? anonConfig?.piiCheck) === true;
-
   if (shouldCheckTextPii || shouldCheckMediaPii) {
     if (piiApproved.has(chatJid)) {
+      // Already handled above — this branch won't fire
       piiApproved.delete(chatJid);
     } else {
       const allPiiItems: PiiItem[] = [];
@@ -369,6 +393,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const piiResult: PiiResult = { found: allPiiItems };
         pendingAnon.set(chatJid, {
           anonPrompt,
+          rawSubstitutedPrompt,
           imageAttachments,
           piiResult,
           anonConfig: anonConfig!,
@@ -607,7 +632,6 @@ async function startMessageLoop(): Promise<void> {
       // Expire timed-out PII holds
       for (const [jid, pending] of pendingAnon) {
         if (Date.now() - pending.heldAt > PENDING_TIMEOUT_MS) {
-          pendingAnon.delete(jid);
           piiApproved.add(jid);
           queue.enqueueMessageCheck(jid);
           logger.warn(
@@ -662,7 +686,8 @@ async function startMessageLoop(): Promise<void> {
               for (const item of pending.piiResult.found) {
                 addMapping(group.folder, item.text, item.suggestion);
               }
-              pendingAnon.delete(chatJid);
+              // Keep pendingAnon record — processGroupMessages uses its
+              // cached rawSubstitutedPrompt (documents are quarantined).
               piiApproved.add(chatJid);
               queue.enqueueMessageCheck(chatJid);
               logger.info(
@@ -671,7 +696,6 @@ async function startMessageLoop(): Promise<void> {
               );
               continue;
             } else if (cmd === PII_CMD_SKIP) {
-              pendingAnon.delete(chatJid);
               piiApproved.add(chatJid);
               queue.enqueueMessageCheck(chatJid);
               logger.info(
@@ -689,7 +713,6 @@ async function startMessageLoop(): Promise<void> {
                   (item) => item.text.toLowerCase() !== real.toLowerCase(),
                 );
                 if (pending.piiResult.found.length === 0) {
-                  pendingAnon.delete(chatJid);
                   piiApproved.add(chatJid);
                   queue.enqueueMessageCheck(chatJid);
                   logger.info(

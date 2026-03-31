@@ -97,6 +97,16 @@ function buildVolumeMounts(
       });
     }
 
+    // Shadow data/ so the agent cannot read quarantined PII documents,
+    // session data from other groups, or any runtime state.
+    const emptyDir = path.join(DATA_DIR, '.empty-shadow');
+    fs.mkdirSync(emptyDir, { recursive: true });
+    mounts.push({
+      hostPath: emptyDir,
+      containerPath: '/workspace/project/data',
+      readonly: true,
+    });
+
     // Main also gets its group folder as the working directory
     mounts.push({
       hostPath: groupDir,
