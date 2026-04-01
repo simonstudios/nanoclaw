@@ -23,6 +23,42 @@ export interface PiiResult {
   found: PiiItem[];
 }
 
+/** Structured PII patterns that the LLM sometimes misses. */
+const STRUCTURED_PII_PATTERNS: Array<{ pattern: RegExp; type: string }> = [
+  // NHS numbers: 10 digits, optionally spaced as 3-3-4
+  { pattern: /\b\d{3}\s?\d{3}\s?\d{4}\b/g, type: 'other' },
+  // UK postcodes
+  {
+    pattern: /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi,
+    type: 'address',
+  },
+  // UK phone numbers (landline and mobile)
+  { pattern: /\b0\d{2,4}\s?\d{3,4}\s?\d{3,4}\b/g, type: 'phone' },
+  // Email addresses
+  { pattern: /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g, type: 'email' },
+  // Case/reference numbers (e.g. Ref: 2675434)
+  { pattern: /\bRef[:\s#]+\d{4,}\b/gi, type: 'other' },
+];
+
+function scanForStructuredPii(
+  text: string,
+  pseudonymSet: Set<string>,
+): PiiItem[] {
+  const items: PiiItem[] = [];
+  const seen = new Set<string>();
+  for (const { pattern, type } of STRUCTURED_PII_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      const found = match[0].trim();
+      if (seen.has(found) || pseudonymSet.has(found.toLowerCase())) continue;
+      seen.add(found);
+      items.push({ text: found, type, suggestion: '' });
+    }
+  }
+  return items;
+}
+
 /**
  * Ask a local Ollama model to scan already-anonymized text for any remaining PII.
  * Returns found items, or null if clean / error / timeout / piiCheck disabled.
@@ -91,7 +127,16 @@ Respond with ONLY valid JSON, nothing else.`;
       (item) => !pseudonymSet.has(item.text.toLowerCase()),
     );
 
-    // Generate pseudonyms: matchVariant for nicknames, generatePseudonym for new people
+    // Supplement with regex-based detection for structured patterns the
+    // LLM may miss (NHS numbers, postcodes, phone numbers, emails).
+    const regexFindings = scanForStructuredPii(anonymizedText, pseudonymSet);
+    for (const rf of regexFindings) {
+      if (!parsed.found.some((f) => f.text === rf.text)) {
+        parsed.found.push(rf);
+      }
+    }
+
+    // Generate pseudonyms for all items (LLM + regex combined)
     const usedPseudonyms = new Set(Object.values(config.mappings));
     for (const item of parsed.found) {
       const match = matchVariant(item.text, config.mappings);
@@ -100,7 +145,7 @@ Respond with ONLY valid JSON, nothing else.`;
         item.variantOf = match.real;
       } else {
         item.suggestion = generatePseudonym(usedPseudonyms);
-        usedPseudonyms.add(item.suggestion); // prevent duplicates within batch
+        usedPseudonyms.add(item.suggestion);
       }
     }
 
