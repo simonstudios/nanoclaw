@@ -26,7 +26,7 @@ export interface PiiResult {
 /** Structured PII patterns that the LLM sometimes misses. */
 const STRUCTURED_PII_PATTERNS: Array<{ pattern: RegExp; type: string }> = [
   // NHS numbers: 10 digits, optionally spaced as 3-3-4
-  { pattern: /\b\d{3}\s?\d{3}\s?\d{4}\b/g, type: 'other' },
+  { pattern: /\b[1-9]\d{2}\s?\d{3}\s?\d{4}\b/g, type: 'other' },
   // UK postcodes
   {
     pattern: /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi,
@@ -47,9 +47,8 @@ function scanForStructuredPii(
   const items: PiiItem[] = [];
   const seen = new Set<string>();
   for (const { pattern, type } of STRUCTURED_PII_PATTERNS) {
-    pattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text)) !== null) {
+    const re = new RegExp(pattern.source, pattern.flags);
+    for (const match of text.matchAll(re)) {
       const found = match[0].trim();
       if (seen.has(found) || pseudonymSet.has(found.toLowerCase())) continue;
       seen.add(found);

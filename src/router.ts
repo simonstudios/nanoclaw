@@ -12,18 +12,8 @@ export function escapeXml(s: string): string {
 
 export function formatMessages(
   messages: NewMessage[],
-  timezoneOrImagePathTransformer?: string | ((hostPath: string) => string),
-  imagePathTransformer?: (hostPath: string) => string,
+  timezone?: string,
 ): string {
-  const timezone =
-    typeof timezoneOrImagePathTransformer === 'string'
-      ? timezoneOrImagePathTransformer
-      : undefined;
-  const transformImagePath =
-    typeof timezoneOrImagePathTransformer === 'function'
-      ? timezoneOrImagePathTransformer
-      : imagePathTransformer;
-
   const lines = messages.map((m) => {
     const displayTime = timezone
       ? formatLocalTime(m.timestamp, timezone)
