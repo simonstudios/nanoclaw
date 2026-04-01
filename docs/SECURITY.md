@@ -9,6 +9,10 @@
 | Container agents | Sandboxed | Isolated execution environment |
 | Incoming messages | User input | Potential prompt injection |
 
+## PII Protection
+
+Groups handling sensitive personal information (adoption, medical, childcare) can enable per-group anonymization and PII detection. See **[PII-PROTECTION.md](PII-PROTECTION.md)** for the full specification.
+
 ## Security Boundaries
 
 ### 1. Container Isolation (Primary Boundary)
