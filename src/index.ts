@@ -366,32 +366,48 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (piiResult) allPiiItems.push(...piiResult.found);
       }
 
-      // Image PII check — fail-closed: strip images that can't be checked
+      // Image processing — three outcomes per image:
+      // 1. Contains text → extract, anonymize, inline as text. Image NOT sent.
+      // 2. No text → hold for user confirmation before sending.
+      // 3. Vision model failure → quarantine and strip (fail-closed).
+      const imagesNeedingConfirmation: string[] = [];
       if (shouldCheckMediaPii && imageAttachments.length > 0) {
-        const checkedImages: typeof imageAttachments = [];
+        const confirmedImages: typeof imageAttachments = [];
         for (const img of imageAttachments) {
           const imgPath = path.join(groupDir, img.relativePath);
-          const result = await checkImagePii(
-            imgPath,
-            path.basename(img.relativePath),
-            anonConfig!,
-          );
-          allPiiItems.push(...result.items);
+          const imgFilename = path.basename(img.relativePath);
+          const result = await checkImagePii(imgPath, imgFilename, anonConfig!);
+
           if (result.failure) {
             mediaFailures.push(result.failure);
-            // Quarantine failed images — agent should not access unchecked files
             quarantineFile(imgPath, groupDir);
-          } else {
-            checkedImages.push(img);
+          } else if (result.extractedText) {
+            // Image has readable text — inline the text, quarantine the image.
+            // The extracted text will be anonymized by the outer anonymize()
+            // that already ran, but we need to re-anonymize the prompt with
+            // the new image text appended.
+            rawSubstitutedPrompt += `\n[Image text from ${imgFilename}]\n${result.extractedText}\n[End image text]`;
+            anonPrompt = anonymize(rawSubstitutedPrompt, anonConfig!);
+            allPiiItems.push(...result.items);
+            quarantineFile(imgPath, groupDir);
+            logger.info(
+              { filename: imgFilename },
+              'Image contained text — inlined as text, image quarantined',
+            );
+          } else if (result.needsConfirmation) {
+            // No readable text — need user confirmation
+            imagesNeedingConfirmation.push(imgFilename);
+            confirmedImages.push(img);
           }
         }
-        // Replace attachments with only the successfully checked ones
         imageAttachments.length = 0;
-        imageAttachments.push(...checkedImages);
+        imageAttachments.push(...confirmedImages);
       }
 
-      if (allPiiItems.length > 0) {
-        // Hold message until user approves mappings
+      // Hold for PII approval or image confirmation
+      const needsHold =
+        allPiiItems.length > 0 || imagesNeedingConfirmation.length > 0;
+      if (needsHold) {
         const piiResult: PiiResult = { found: allPiiItems };
         pendingAnon.set(chatJid, {
           anonPrompt,
@@ -401,10 +417,32 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           anonConfig: anonConfig!,
           heldAt: Date.now(),
         });
-        await channel.sendMessage(chatJid, formatPiiAlert(piiResult));
+
+        const alertParts: string[] = [];
+        if (allPiiItems.length > 0) {
+          alertParts.push(formatPiiAlert(piiResult));
+        }
+        if (imagesNeedingConfirmation.length > 0) {
+          const imageList = imagesNeedingConfirmation.join(', ');
+          alertParts.push(
+            `Images with no readable text: ${imageList}\nThese will be sent to the agent as-is if you approve.`,
+          );
+        }
+        if (alertParts.length > 0 && allPiiItems.length === 0) {
+          // Only image confirmation needed, no PII — still show approve/skip
+          alertParts.push(
+            '\nReply:\n  "approve" — send images\n  "skip" — send without images',
+          );
+        }
+
+        await channel.sendMessage(chatJid, alertParts.join('\n\n'));
         logger.info(
-          { group: group.name, piiCount: allPiiItems.length },
-          'PII detected, message held for approval',
+          {
+            group: group.name,
+            piiCount: allPiiItems.length,
+            imageConfirmations: imagesNeedingConfirmation.length,
+          },
+          'Message held for PII approval or image confirmation',
         );
         return true;
       }
@@ -776,7 +814,9 @@ async function startMessageLoop(): Promise<void> {
           // the batch path for the full Ollama PII scan. The streaming path
           // only applies static anonymize() which misses unknown names.
           const pipeAnonConfig = loadAnonymizeConfig(group.folder);
-          const piiEnabled = pipeAnonConfig?.piiCheck === true;
+          const piiEnabled =
+            pipeAnonConfig?.piiCheck === true ||
+            (pipeAnonConfig?.mediaPiiCheck ?? false) === true;
           if (piiEnabled) {
             queue.enqueueMessageCheck(chatJid);
             continue;

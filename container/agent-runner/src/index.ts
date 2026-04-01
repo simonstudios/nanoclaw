@@ -160,17 +160,6 @@ function buildContentBlocks(
     if (block) blocks.push(block);
   }
 
-  const imageRegex = /image="([^"]+)"/g;
-  for (const match of text.matchAll(imageRegex)) {
-    const imagePath = match[1]
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"');
-    const block = loadImageBlock(imagePath);
-    if (block) blocks.push(block);
-  }
-
   return blocks.length === 1 ? text : blocks;
 }
 
@@ -639,40 +628,47 @@ async function runScript(script: string): Promise<ScriptResult | null> {
   fs.writeFileSync(scriptPath, script, { mode: 0o755 });
 
   return new Promise((resolve) => {
-    execFile('bash', [scriptPath], {
-      timeout: SCRIPT_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024,
-      env: process.env,
-    }, (error, stdout, stderr) => {
-      if (stderr) {
-        log(`Script stderr: ${stderr.slice(0, 500)}`);
-      }
+    execFile(
+      'bash',
+      [scriptPath],
+      {
+        timeout: SCRIPT_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+        env: process.env,
+      },
+      (error, stdout, stderr) => {
+        if (stderr) {
+          log(`Script stderr: ${stderr.slice(0, 500)}`);
+        }
 
-      if (error) {
-        log(`Script error: ${error.message}`);
-        return resolve(null);
-      }
-
-      // Parse last non-empty line of stdout as JSON
-      const lines = stdout.trim().split('\n');
-      const lastLine = lines[lines.length - 1];
-      if (!lastLine) {
-        log('Script produced no output');
-        return resolve(null);
-      }
-
-      try {
-        const result = JSON.parse(lastLine);
-        if (typeof result.wakeAgent !== 'boolean') {
-          log(`Script output missing wakeAgent boolean: ${lastLine.slice(0, 200)}`);
+        if (error) {
+          log(`Script error: ${error.message}`);
           return resolve(null);
         }
-        resolve(result as ScriptResult);
-      } catch {
-        log(`Script output is not valid JSON: ${lastLine.slice(0, 200)}`);
-        resolve(null);
-      }
-    });
+
+        // Parse last non-empty line of stdout as JSON
+        const lines = stdout.trim().split('\n');
+        const lastLine = lines[lines.length - 1];
+        if (!lastLine) {
+          log('Script produced no output');
+          return resolve(null);
+        }
+
+        try {
+          const result = JSON.parse(lastLine);
+          if (typeof result.wakeAgent !== 'boolean') {
+            log(
+              `Script output missing wakeAgent boolean: ${lastLine.slice(0, 200)}`,
+            );
+            return resolve(null);
+          }
+          resolve(result as ScriptResult);
+        } catch {
+          log(`Script output is not valid JSON: ${lastLine.slice(0, 200)}`);
+          resolve(null);
+        }
+      },
+    );
   });
 }
 
@@ -735,7 +731,9 @@ async function main(): Promise<void> {
     const scriptResult = await runScript(containerInput.script);
 
     if (!scriptResult || !scriptResult.wakeAgent) {
-      const reason = scriptResult ? 'wakeAgent=false' : 'script error/no output';
+      const reason = scriptResult
+        ? 'wakeAgent=false'
+        : 'script error/no output';
       log(`Script decided not to wake agent: ${reason}`);
       writeOutput({
         status: 'success',

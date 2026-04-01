@@ -137,7 +137,7 @@ describe('checkDocPii', () => {
 });
 
 describe('checkImagePii', () => {
-  it('detects PII via two-stage pipeline (vision extract → text PII check)', async () => {
+  it('returns extractedText + PII items when image contains readable text', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -155,7 +155,8 @@ describe('checkImagePii', () => {
     const result = await checkImagePii('/tmp/doc.jpg', 'img-1234.jpg', baseCfg);
     expect(result.items).toHaveLength(1);
     expect(result.items[0].text).toBe('Dr Patel');
-    expect(result.items[0].source).toBe('img-1234.jpg');
+    expect(result.extractedText).toBe('Letter to Dr Patel, 15 Oak Road');
+    expect(result.needsConfirmation).toBeUndefined();
     expect(result.failure).toBeUndefined();
   });
 
@@ -168,7 +169,7 @@ describe('checkImagePii', () => {
     expect(result.failure!.filename).toBe('img-1234.jpg');
   });
 
-  it('returns clean (no failure) when vision model extracts no text', async () => {
+  it('returns needsConfirmation when vision model finds no text', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ response: '' }),
@@ -180,10 +181,12 @@ describe('checkImagePii', () => {
       baseCfg,
     );
     expect(result.items).toHaveLength(0);
+    expect(result.needsConfirmation).toBe(true);
+    expect(result.extractedText).toBeUndefined();
     expect(result.failure).toBeUndefined();
   });
 
-  it('returns clean when text PII check finds nothing', async () => {
+  it('returns extractedText with no PII items when text is clean', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -202,7 +205,8 @@ describe('checkImagePii', () => {
       baseCfg,
     );
     expect(result.items).toHaveLength(0);
-    expect(result.failure).toBeUndefined();
+    expect(result.extractedText).toBe('A picture of a sunset');
+    expect(result.needsConfirmation).toBeUndefined();
   });
 
   it('returns failure on vision timeout (fail-closed)', async () => {
@@ -220,7 +224,7 @@ describe('checkImagePii', () => {
     expect(result.failure).toBeDefined();
   });
 
-  it('returns clean when image file cannot be read (not an Ollama failure)', async () => {
+  it('returns needsConfirmation when image file cannot be read', async () => {
     vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
       throw new Error('ENOENT');
     });
@@ -231,8 +235,8 @@ describe('checkImagePii', () => {
       baseCfg,
     );
     expect(result.items).toHaveLength(0);
-    // File not found is not a check failure — the image simply doesn't exist
-    expect(result.failure).toBeUndefined();
+    // File not found — vision can't run, but file also can't be sent
+    expect(result.needsConfirmation).toBe(true);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });

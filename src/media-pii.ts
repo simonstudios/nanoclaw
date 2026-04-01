@@ -148,16 +148,20 @@ export interface ImagePiiResult {
   items: PiiItem[];
   /** Set when the check could not run — image should be stripped. */
   failure?: MediaCheckFailure;
+  /** Raw text extracted from image (before anonymization). When present,
+   *  the caller should inline this text instead of sending the image. */
+  extractedText?: string;
+  /** True when the vision model found no readable text. The caller should
+   *  prompt the user for confirmation before sending the raw image. */
+  needsConfirmation?: boolean;
 }
 
 /**
- * Check an image for PII using a two-stage pipeline:
- * 1. Vision model (llava) extracts text from the image
- * 2. Text model (qwen2.5) scans extracted text for PII
- *
- * Returns a failure if the check could not run (Ollama down, model not
- * pulled, etc.) — the caller must strip the image rather than letting
- * it through unchecked.
+ * Process an image for PII safety:
+ * - If the image contains readable text: extract it (for the caller to
+ *   anonymize and inline instead of the image). The raw image is NOT sent.
+ * - If the image has no readable text: flag it for user confirmation.
+ * - If the vision model is unreachable: return a failure (fail-closed).
  */
 export async function checkImagePii(
   imagePath: string,
@@ -175,21 +179,23 @@ export async function checkImagePii(
     };
   }
 
-  // null means vision model ran but found no readable text — that's clean
-  if (imageText === null) return { items: [] };
+  // No readable text — image needs user confirmation before sending
+  if (imageText === null) {
+    return { items: [], needsConfirmation: true };
+  }
 
   logger.debug(
     { filename, textLength: imageText.length },
     'media-pii: extracted text from image',
   );
 
-  // Stage 2: Anonymize and check extracted text via text PII model
+  // Stage 2: Anonymize extracted text and check for PII
   const anonymized = anonymize(imageText, config);
   const result = await checkForPii(anonymized, config);
-  if (!result) return { items: [] };
 
   return {
-    items: result.found.map((item) => ({ ...item, source: filename })),
+    items: result?.found.map((item) => ({ ...item, source: filename })) ?? [],
+    extractedText: imageText,
   };
 }
 
