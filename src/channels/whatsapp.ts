@@ -295,7 +295,12 @@ export class WhatsAppChannel implements Channel {
 
             if (!content && isVoiceMessage(msg)) {
               try {
-                const transcript = await transcribeAudioMessage(msg, this.sock);
+                const groupFolder = groups[chatJid]?.folder;
+                const transcript = await transcribeAudioMessage(
+                  msg,
+                  this.sock,
+                  groupFolder,
+                );
                 content = transcript
                   ? transcript.startsWith('[')
                     ? transcript

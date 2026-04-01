@@ -112,8 +112,9 @@ export async function extractImageText(
     imageData = buffer.toString('base64');
   } catch (err) {
     logger.warn({ err, path: imagePath }, 'media-pii: failed to read image');
-    // File not readable is not an Ollama failure — image simply doesn't exist
-    return null;
+    // Throw so checkImagePii treats this as a failure (fail-closed),
+    // not as "no text found" which would prompt for confirmation.
+    throw err;
   }
 
   const controller = new AbortController();

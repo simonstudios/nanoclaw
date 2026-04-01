@@ -224,7 +224,7 @@ describe('checkImagePii', () => {
     expect(result.failure).toBeDefined();
   });
 
-  it('returns needsConfirmation when image file cannot be read', async () => {
+  it('returns failure when image file cannot be read (fail-closed)', async () => {
     vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
       throw new Error('ENOENT');
     });
@@ -235,8 +235,8 @@ describe('checkImagePii', () => {
       baseCfg,
     );
     expect(result.items).toHaveLength(0);
-    // File not found — vision can't run, but file also can't be sent
-    expect(result.needsConfirmation).toBe(true);
+    expect(result.failure).toBeDefined();
+    expect(result.failure!.filename).toBe('missing.jpg');
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
