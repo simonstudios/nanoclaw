@@ -684,7 +684,9 @@ describe('WhatsAppChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
         expect.objectContaining({
-          content: expect.stringContaining('[DOC: attachments/report.pdf'),
+          content: expect.stringMatching(
+            /\[DOC: attachments\/doc-\d+-\w+\.pdf/,
+          ),
         }),
       );
     });
@@ -725,7 +727,9 @@ describe('WhatsAppChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
         expect.objectContaining({
-          content: expect.stringContaining('[DOC: attachments/report.pdf'),
+          content: expect.stringMatching(
+            /\[DOC: attachments\/doc-\d+-\w+\.pdf/,
+          ),
         }),
       );
     });

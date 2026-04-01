@@ -268,13 +268,13 @@ export class WhatsAppChannel implements Channel {
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const attachDir = path.join(groupDir, 'attachments');
                 fs.mkdirSync(attachDir, { recursive: true });
+                // Use a sanitized filename to prevent PII in original filenames
+                // (e.g. "Olivia Medical Report.pdf") from reaching the prompt.
                 const ext =
                   DOC_MIME_EXTENSIONS[docMime] ||
                   path.extname(docMsg.fileName || '') ||
                   '.bin';
-                const filename = path.basename(
-                  docMsg.fileName || `doc-${Date.now()}${ext}`,
-                );
+                const filename = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}${ext}`;
                 const filePath = path.join(attachDir, filename);
                 fs.writeFileSync(filePath, buffer as Buffer);
                 const sizeKB = Math.round((buffer as Buffer).length / 1024);

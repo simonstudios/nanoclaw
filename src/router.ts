@@ -28,10 +28,7 @@ export function formatMessages(
     const displayTime = timezone
       ? formatLocalTime(m.timestamp, timezone)
       : m.timestamp;
-    const imageAttr = m.image_path
-      ? ` image="${escapeXml(transformImagePath ? transformImagePath(m.image_path) : m.image_path)}"`
-      : '';
-    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${imageAttr}>${escapeXml(m.content)}</message>`;
+    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}</message>`;
   });
 
   const header = timezone
