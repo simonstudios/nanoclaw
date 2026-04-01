@@ -825,6 +825,9 @@ async function startMessageLoop(): Promise<void> {
             pipeAnonConfig?.piiCheck === true ||
             (pipeAnonConfig?.mediaPiiCheck ?? false) === true;
           if (piiEnabled) {
+            // Close the idle container so the batch path can spawn a fresh one.
+            // Without this, the queue sees the group as busy and won't process.
+            queue.closeStdin(chatJid);
             queue.enqueueMessageCheck(chatJid);
             continue;
           }
