@@ -494,11 +494,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // PII clearance: if we reached this point, either PII checking passed
+  // (no PII found or user approved) or the group has no anonymize config.
+  const piiCleared = anonConfig ? 'passed' : 'not-required';
+
   const output = await runAgent(
     group,
     anonPrompt,
     chatJid,
     imageAttachments,
+    piiCleared as 'passed' | 'not-required',
     async (result) => {
       // Streaming output callback — called for each agent result
       if (result.result) {
@@ -559,6 +564,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   imageAttachments: Array<{ relativePath: string; mediaType: string }>,
+  piiCleared: 'passed' | 'not-required',
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
@@ -612,6 +618,7 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
         imageAttachments,
+        piiCleared,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

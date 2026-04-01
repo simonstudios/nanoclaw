@@ -120,6 +120,7 @@ const testInput = {
   groupFolder: 'test-group',
   chatJid: 'test@g.us',
   isMain: false,
+  piiCleared: 'not-required' as const,
 };
 
 function emitOutputMarker(

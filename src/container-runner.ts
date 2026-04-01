@@ -51,6 +51,14 @@ export interface ContainerInput {
   assistantName?: string;
   imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
   script?: string;
+  /**
+   * REQUIRED when the group has PII checking enabled.
+   * Must be set to `'passed'` after anonymize + checkForPii complete,
+   * or `'not-required'` when the group has no anonymize config.
+   * runContainerAgent will REFUSE to run if this is missing when
+   * the group has an anonymize config.
+   */
+  piiCleared?: 'passed' | 'not-required';
 }
 
 export interface ContainerOutput {
@@ -336,6 +344,14 @@ export async function runContainerAgent(
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
+  // Structural PII gate: refuse to send ANY prompt to the container
+  // without explicit PII clearance when the group has anonymization.
+  if (input.piiCleared !== 'passed' && input.piiCleared !== 'not-required') {
+    const msg = `BLOCKED: prompt sent to container without piiCleared flag (group=${group.folder})`;
+    logger.error(msg);
+    throw new Error(msg);
+  }
+
   const startTime = Date.now();
 
   const groupDir = resolveGroupFolderPath(group.folder);
