@@ -23,6 +23,66 @@ export interface PiiResult {
   found: PiiItem[];
 }
 
+/**
+ * Heuristic filter: reject findings that look like medical/clinical terms
+ * rather than actual PII. The Ollama model frequently flags these despite
+ * prompt instructions not to.
+ */
+const MEDICAL_KEYWORDS = [
+  'vaccine',
+  'vaccination',
+  'immunisation',
+  'immunization',
+  'prescription',
+  'allergy',
+  'allergies',
+  'drooling',
+  'rash',
+  'feeding',
+  'weaning',
+  'eczema',
+  'reflux',
+  'asthma',
+  'cough',
+  'coughing',
+  'teething',
+  'eruption',
+  'multivitamin',
+  'vitamin',
+  'paracetamol',
+  'ibuprofen',
+  'antibiotic',
+  'neocate',
+  'aptamil',
+  'gaviscon',
+  'omeprazole',
+  'diagnosis',
+  'prognosis',
+  'symptom',
+  'treatment',
+  'mileston',
+  'centile',
+  'percentile',
+  'weight gain',
+  'head circumference',
+  'developmental',
+  'rsv',
+  'mmr',
+  'bcg',
+  'dtap',
+  'dentist',
+  'gp visit',
+  'health visitor',
+  'review',
+  'clinic',
+  'referral',
+];
+
+function isMedicalTerm(text: string): boolean {
+  const lower = text.toLowerCase();
+  return MEDICAL_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 /** Structured PII patterns that the LLM sometimes misses. */
 const STRUCTURED_PII_PATTERNS: Array<{ pattern: RegExp; type: string }> = [
   // NHS numbers: 10 digits, optionally spaced as 3-3-4
@@ -134,6 +194,22 @@ Respond with ONLY valid JSON, nothing else.`;
     parsed.found = parsed.found.filter(
       (item) => !pseudonymSet.has(item.text.toLowerCase()),
     );
+
+    // Filter out non-PII types the model sometimes returns despite instructions
+    const ACCEPTED_TYPES = new Set([
+      'name',
+      'date',
+      'address',
+      'phone',
+      'email',
+      'other',
+    ]);
+    parsed.found = parsed.found.filter((item) =>
+      ACCEPTED_TYPES.has(item.type.toLowerCase()),
+    );
+
+    // Filter out medical/clinical false positives via keyword heuristic
+    parsed.found = parsed.found.filter((item) => !isMedicalTerm(item.text));
 
     // Supplement with regex-based detection for structured patterns the
     // LLM may miss (NHS numbers, postcodes, phone numbers, emails).
