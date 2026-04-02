@@ -181,7 +181,7 @@ describe('checkForPii', () => {
 describe('matchVariant', () => {
   const mappings = { Olivia: 'Luna', Simon: 'Alex' };
 
-  it('matches via shared 3-char window: Livvy↔Olivia share "liv"', () => {
+  it('matches containment: Livvy contains "livy" close to Olivia via Levenshtein', () => {
     const result = matchVariant('Livvy', mappings);
     expect(result).toEqual({ pseudo: 'Luna', real: 'Olivia' });
   });
@@ -191,7 +191,7 @@ describe('matchVariant', () => {
     expect(result).toEqual({ pseudo: 'Luna', real: 'Olivia' });
   });
 
-  it('matches prefix: Sim shares 3-char window with Simon', () => {
+  it('matches prefix: Sim shares prefix with Simon', () => {
     const result = matchVariant('Sim', mappings);
     expect(result).toEqual({ pseudo: 'Alex', real: 'Simon' });
   });
@@ -205,6 +205,30 @@ describe('matchVariant', () => {
     expect(matchVariant('Jenny', mappings)).toBeNull();
   });
 
+  it('does NOT match medical/clinical terms that share substrings with names', () => {
+    expect(matchVariant('drooling', mappings)).toBeNull();
+    expect(matchVariant('RSV vaccine missed', mappings)).toBeNull();
+    expect(matchVariant('neocate prescription', mappings)).toBeNull();
+    expect(
+      matchVariant('dentist from 12 months or teeth eruption', mappings),
+    ).toBeNull();
+    expect(matchVariant('multivitamins from age 1', mappings)).toBeNull();
+  });
+
+  it('skips email and numeric mapping keys', () => {
+    const withEmails = {
+      ...mappings,
+      'katherine@example.com': 'Ember',
+      '07901274725': 'Briar',
+    };
+    expect(matchVariant('katherine', withEmails)).toBeNull();
+    expect(matchVariant('079012', withEmails)).toBeNull();
+  });
+
+  it('skips multi-word phrases (>2 words)', () => {
+    expect(matchVariant('reference to other allergy', mappings)).toBeNull();
+  });
+
   it('skips names shorter than 3 chars', () => {
     expect(matchVariant('Si', mappings)).toBeNull();
     expect(matchVariant('Ol', mappings)).toBeNull();
@@ -215,13 +239,13 @@ describe('matchVariant', () => {
   });
 
   it('is case insensitive', () => {
-    expect(matchVariant('LIVVY', mappings)).toEqual({
+    expect(matchVariant('OLIVIA', mappings)).toEqual({
       pseudo: 'Luna',
       real: 'Olivia',
     });
-    expect(matchVariant('olivia', mappings)).toEqual({
-      pseudo: 'Luna',
-      real: 'Olivia',
+    expect(matchVariant('simon', mappings)).toEqual({
+      pseudo: 'Alex',
+      real: 'Simon',
     });
   });
 });

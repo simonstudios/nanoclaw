@@ -71,7 +71,16 @@ export async function checkForPii(
   const model = config.piiModel || DEFAULT_MODEL;
   const knownPseudonyms = Object.values(config.mappings).join(', ');
 
-  const prompt = `You are a PII detector. Analyze this message for any personally identifiable information (PII) that has NOT been anonymized. PII includes: real names, nicknames, dates of birth, addresses, postcodes, phone numbers, email addresses, hospital names, school names, social worker names, case reference numbers.
+  const prompt = `You are a PII detector. Analyze this message for any personally identifiable information (PII) that has NOT been anonymized. PII includes: real names of people, nicknames, dates of birth, home addresses, postcodes, phone numbers, email addresses, social worker names, case reference numbers.
+
+IMPORTANT — Do NOT flag any of the following as PII:
+- Medical or clinical terms (symptoms, diagnoses, conditions, procedures)
+- Prescription or medication names (e.g. Neocate, paracetamol, omeprazole)
+- Vaccine names or abbreviations (RSV, MMR, BCG)
+- Health descriptions (drooling, rash, weight gain, feeding)
+- General schedules or milestones (e.g. "from age 1", "12 months")
+- Organisation types without specific names (e.g. "the GP", "the nursery")
+Only flag things that identify a SPECIFIC person, place, or contact detail.
 
 Known pseudonyms already in use (these are NOT PII — ignore them): ${knownPseudonyms}
 
@@ -228,9 +237,14 @@ export function generatePseudonym(usedPseudonyms: Set<string>): string {
 /**
  * Deterministic variant detection using string similarity.
  * Returns the existing pseudonym + real name if the detected name is likely
- * a nickname or shortened form. Only matches on shared substring (≥3 chars)
- * or shared prefix (≥3 chars). This avoids the 7B model's tendency to
- * map every new name to the nearest existing pseudonym.
+ * a nickname or shortened form.
+ *
+ * Uses two strategies:
+ * 1. Shared prefix ≥3 chars (catches Sim→Simon, Liv→Olivia)
+ * 2. Levenshtein distance ≤2 for similar-length names (catches Livvy↔Olivia)
+ *
+ * The old 3-char sliding window was too permissive — "drooling" matched
+ * "Olivia" because both contain "oli". This version avoids those false positives.
  */
 export function matchVariant(
   detectedName: string,
@@ -238,22 +252,65 @@ export function matchVariant(
 ): { pseudo: string; real: string } | null {
   const lower = detectedName.toLowerCase();
   if (lower.length < 3) return null;
+
+  // Skip multi-word phrases — variant detection is for name variants,
+  // not for sentences or medical terms that happen to overlap
+  if (lower.includes(' ') && lower.split(/\s+/).length > 2) return null;
+
   for (const [real, pseudo] of Object.entries(mappings)) {
     const realLower = real.toLowerCase();
     if (realLower.length < 3) continue;
-    // Check for any shared 3-char window between the two names.
-    // Catches: Livvy↔Olivia (share "liv"), Sim↔Simon (share "sim")
-    // Rejects: Claire↔Olivia (no shared 3-char window)
-    let matched = false;
-    for (let i = 0; i <= lower.length - 3; i++) {
-      if (realLower.includes(lower.slice(i, i + 3))) {
-        matched = true;
-        break;
+
+    // Skip non-name mappings (emails, postcodes, phone numbers, dates)
+    if (realLower.includes('@') || /^\d/.test(realLower)) continue;
+
+    // Strategy 1: Shared prefix ≥3 chars
+    const minLen = Math.min(lower.length, realLower.length);
+    let prefixLen = 0;
+    for (let i = 0; i < minLen; i++) {
+      if (lower[i] === realLower[i]) prefixLen++;
+      else break;
+    }
+    if (prefixLen >= 3) return { pseudo, real };
+
+    // Strategy 2: One name contains the other (Liv inside Olivia)
+    if (
+      lower.length >= 3 &&
+      realLower.length >= 3 &&
+      (realLower.includes(lower) || lower.includes(realLower))
+    ) {
+      return { pseudo, real };
+    }
+
+    // Strategy 3: Levenshtein distance ≤3 for similar-length strings
+    // Catches nickname variants like Livvy↔Olivia (distance 3)
+    if (Math.abs(lower.length - realLower.length) <= 3) {
+      if (levenshtein(lower, realLower) <= 3) {
+        return { pseudo, real };
       }
     }
-    if (matched) return { pseudo, real };
   }
   return null;
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    Array(n + 1).fill(0),
+  );
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return dp[m][n];
 }
 
 /** Format a PII alert message for the user. */
