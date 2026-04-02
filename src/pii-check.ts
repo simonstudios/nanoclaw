@@ -3,7 +3,7 @@ import { logger } from './logger.js';
 
 export const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const DEFAULT_MODEL = 'qwen2.5:7b';
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 90_000;
 
 export const PII_CMD_APPROVE = 'approve';
 export const PII_CMD_SKIP = 'skip';
