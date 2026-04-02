@@ -684,25 +684,8 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
-      // Expire timed-out PII holds — DROP the message rather than releasing
-      for (const [jid, pending] of pendingAnon) {
-        if (Date.now() - pending.heldAt > PENDING_TIMEOUT_MS) {
-          pendingAnon.delete(jid);
-          const channel = findChannel(channels, jid);
-          if (channel) {
-            channel
-              .sendMessage(
-                jid,
-                'PII hold expired (5 min). Message was NOT sent. Please resend to trigger a new PII check.',
-              )
-              .catch(() => {});
-          }
-          logger.warn(
-            { chatJid: jid },
-            'PII hold timed out, message dropped (not released)',
-          );
-        }
-      }
+      // PII holds persist indefinitely until the user responds.
+      // No timeout — the message stays held until approve/skip/map.
 
       const jids = Object.keys(registeredGroups);
       const { messages, newTimestamp } = getNewMessages(
