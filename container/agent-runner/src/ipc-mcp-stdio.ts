@@ -68,6 +68,132 @@ server.tool(
 );
 
 server.tool(
+  'send_message_to',
+  `Send a message to an external contact on WhatsApp or Gmail. Main group only.
+For WhatsApp: provide a phone number (e.g., "+61412345678") or WhatsApp JID.
+For Gmail: provide an email address.
+The message is sent directly — use request_approval instead if you need the user to review it first.`,
+  {
+    recipient: z
+      .string()
+      .describe(
+        'Phone number with country code (e.g., "+61412345678") for WhatsApp, or email address for Gmail',
+      ),
+    text: z.string().describe('The message text to send'),
+    channel: z
+      .enum(['whatsapp', 'gmail'])
+      .describe('Which channel to send through'),
+    subject: z
+      .string()
+      .optional()
+      .describe('Email subject (Gmail only, ignored for WhatsApp)'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only the main group can send messages to external contacts.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'outbound_message',
+      recipient: args.recipient,
+      text: args.text,
+      channel: args.channel,
+      subject: args.subject || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Message sent to ${args.recipient} via ${args.channel}.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'request_approval',
+  `Request user approval before sending a message to an external contact. Main group only.
+The draft is shown to the user on their main chat. They can reply:
+- "send" or "send all" to approve
+- "send 1, 3" to approve specific drafts by number
+- "edit: [changes]" to request revisions (you'll need to revise and re-submit)
+- "cancel" to discard
+
+Use this instead of send_message_to when the user should review the message first.`,
+  {
+    recipient: z
+      .string()
+      .describe(
+        'Phone number (e.g., "+61412345678") for WhatsApp, or email address for Gmail',
+      ),
+    text: z.string().describe('The draft message text'),
+    channel: z
+      .enum(['whatsapp', 'gmail'])
+      .describe('Which channel to send through'),
+    subject: z
+      .string()
+      .optional()
+      .describe('Email subject (Gmail only)'),
+    context: z
+      .string()
+      .optional()
+      .describe(
+        'Brief context about why this message is being sent (shown to user)',
+      ),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only the main group can request approvals.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'request_approval',
+      recipient: args.recipient,
+      text: args.text,
+      channel: args.channel,
+      subject: args.subject || undefined,
+      context: args.context || undefined,
+      groupFolder,
+      chatJid,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Approval request sent for message to ${args.recipient} via ${args.channel}. Waiting for user to approve.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 

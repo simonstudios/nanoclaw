@@ -48,6 +48,14 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import {
+  cleanupExpiredApprovals,
+  hasPendingApprovals,
+  parseApprovalCommand,
+  processApproval,
+  trackSentMessage,
+} from './approvals.js';
+import { getBotThreadByRecipient, getBotThreadByThreadId } from './db.js';
 import { startIpcWatcher } from './ipc.js';
 import { parseImageReferences } from './image.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
@@ -787,6 +795,78 @@ async function startMessageLoop(): Promise<void> {
           }
 
           const isMainGroup = group.isMain === true;
+
+          // Approval flow: intercept send/cancel/edit commands in main chat
+          if (isMainGroup && hasPendingApprovals()) {
+            const latest = groupMessages[groupMessages.length - 1];
+            const action = parseApprovalCommand(latest.content);
+            if (action.type !== 'none') {
+              const result = processApproval(action);
+
+              // Send approved messages
+              for (const msg of result.toSend) {
+                try {
+                  let targetJid: string;
+                  let textToSend = msg.content;
+                  if (msg.channel === 'whatsapp') {
+                    const digits = msg.recipient.replace(/[^0-9]/g, '');
+                    targetJid = msg.recipient.includes('@')
+                      ? msg.recipient
+                      : `${digits}@s.whatsapp.net`;
+                  } else {
+                    targetJid = `mailto:${msg.recipient}`;
+                    if (msg.subject) {
+                      textToSend = `Subject: ${msg.subject}\n\n${msg.content}`;
+                    }
+                  }
+
+                  const ch = findChannel(channels, targetJid);
+                  if (ch) {
+                    await ch.sendMessage(targetJid, textToSend);
+                    trackSentMessage(
+                      msg.channel,
+                      targetJid,
+                      msg.recipient,
+                      msg.subject,
+                    );
+                    logger.info(
+                      {
+                        approvalId: msg.id,
+                        recipient: msg.recipient,
+                        channel: msg.channel,
+                      },
+                      'Approved message sent and tracked',
+                    );
+                  } else {
+                    logger.warn(
+                      { targetJid, channel: msg.channel },
+                      'No channel found for approved message',
+                    );
+                  }
+                } catch (err) {
+                  logger.error(
+                    { recipient: msg.recipient, err },
+                    'Failed to send approved message',
+                  );
+                }
+              }
+
+              // Send response to user
+              if (result.response) {
+                const ch = findChannel(channels, chatJid);
+                if (ch) await ch.sendMessage(chatJid, result.response);
+              }
+
+              // If edit requested, let it fall through to the agent
+              // so it can revise the draft
+              if (action.type === 'edit') {
+                // Don't skip — the agent needs to see the edit request
+              } else {
+                continue;
+              }
+            }
+          }
+
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
 
           // For non-main groups, only act on trigger messages.
@@ -998,6 +1078,58 @@ async function main(): Promise<void> {
                 logger.error({ err, chatJid }, 'Anon command error'),
               );
             return;
+          }
+        }
+      }
+
+      // Reply detection: check if message is from a tracked bot thread
+      if (!msg.is_from_me && !msg.is_bot_message) {
+        // WhatsApp: incoming 1:1 messages where chatJid matches a tracked thread
+        const waThread = getBotThreadByThreadId(chatJid);
+        // Gmail: emails delivered to main chat with [Email from ...] prefix
+        const emailMatch = msg.content.match(/^\[Email from .+?<(.+?)>\]/);
+        const gmailThread = emailMatch
+          ? getBotThreadByRecipient(emailMatch[1])
+          : undefined;
+
+        const thread = waThread || gmailThread;
+        if (thread) {
+          const mainEntry = Object.entries(registeredGroups).find(
+            ([, g]) => g.isMain === true,
+          );
+          if (mainEntry) {
+            const [mainJid] = mainEntry;
+
+            // For WhatsApp threads, forward to main (message isn't in a registered group)
+            // For Gmail threads, the email is already delivered to main — add a tracking label
+            if (waThread) {
+              const subjectLine = thread.subject ? ` (${thread.subject})` : '';
+              const notification =
+                `*Reply from ${thread.recipient} via WhatsApp*${subjectLine}\n\n` +
+                `${msg.content}\n\n` +
+                `_Reply here to respond, or say "ignore"_`;
+
+              const ch = findChannel(channels, mainJid);
+              if (ch) {
+                ch.sendMessage(mainJid, notification).catch((err) =>
+                  logger.error(
+                    { err, recipient: thread.recipient },
+                    'Failed to forward bot thread reply',
+                  ),
+                );
+              }
+            }
+            // For Gmail: the email notification is already being delivered to main
+            // by the Gmail channel. Just log that we matched a tracked thread.
+
+            logger.info(
+              {
+                from: thread.recipient,
+                channel: thread.channel,
+                threadId: thread.thread_id,
+              },
+              'Detected reply on tracked bot thread',
+            );
           }
         }
       }

@@ -6,7 +6,13 @@ import { CronExpressionParser } from 'cron-parser';
 import { deanonymize, loadAnonymizeConfig } from './anonymize.js';
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createPendingApproval,
+  createTask,
+  deleteTask,
+  getTaskById,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -24,6 +30,17 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+}
+
+/**
+ * Convert a phone number (e.g. "+61412345678") to a WhatsApp JID.
+ * Strips leading +, spaces, dashes, and appends @s.whatsapp.net.
+ */
+function phoneToWhatsAppJid(phone: string): string {
+  // If already a JID, return as-is
+  if (phone.includes('@')) return phone;
+  const digits = phone.replace(/[^0-9]/g, '');
+  return `${digits}@s.whatsapp.net`;
 }
 
 let ipcWatcherRunning = false;
@@ -75,7 +92,50 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              if (
+                data.type === 'outbound_message' &&
+                data.recipient &&
+                data.text
+              ) {
+                // Outbound to external contact — main group only
+                if (!isMain) {
+                  logger.warn(
+                    { recipient: data.recipient, sourceGroup },
+                    'Unauthorized outbound_message attempt blocked',
+                  );
+                } else {
+                  const anonConfig = loadAnonymizeConfig(sourceGroup);
+                  const outText = anonConfig
+                    ? deanonymize(data.text, anonConfig)
+                    : data.text;
+
+                  if (data.channel === 'whatsapp') {
+                    // Convert phone number to WhatsApp JID
+                    const jid = phoneToWhatsAppJid(data.recipient);
+                    await deps.sendMessage(jid, outText);
+                    logger.info(
+                      { recipient: data.recipient, jid, sourceGroup },
+                      'Outbound WhatsApp message sent',
+                    );
+                  } else if (data.channel === 'gmail') {
+                    // Gmail: use the email JID format the Gmail channel expects
+                    const jid = `mailto:${data.recipient}`;
+                    const textWithSubject = data.subject
+                      ? `Subject: ${data.subject}\n\n${outText}`
+                      : outText;
+                    await deps.sendMessage(jid, textWithSubject);
+                    logger.info(
+                      { recipient: data.recipient, sourceGroup },
+                      'Outbound Gmail message sent',
+                    );
+                  } else {
+                    logger.warn(
+                      { channel: data.channel },
+                      'Unknown outbound channel',
+                    );
+                  }
+                }
+              } else if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
@@ -179,6 +239,12 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For request_approval / outbound_message
+    recipient?: string;
+    text?: string;
+    channel?: string;
+    subject?: string;
+    context?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -464,6 +530,51 @@ export async function processTaskIpc(
         logger.warn(
           { data },
           'Invalid register_group request - missing required fields',
+        );
+      }
+      break;
+
+    case 'request_approval':
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized request_approval attempt blocked',
+        );
+        break;
+      }
+      if (data.recipient && data.text && data.channel && data.chatJid) {
+        const approvalId = createPendingApproval({
+          channel: data.channel,
+          recipient: data.recipient,
+          content: data.text,
+          metadata: JSON.stringify({
+            subject: data.subject || null,
+            context: data.context || null,
+          }),
+          status: 'pending',
+          created_at: new Date().toISOString(),
+        });
+
+        // Format and send preview to user's main chat
+        const channelLabel =
+          data.channel === 'gmail' ? 'email' : 'WhatsApp message';
+        const subjectLine =
+          data.subject && data.channel === 'gmail'
+            ? `\nSubject: ${data.subject}`
+            : '';
+        const contextLine = data.context ? `\n_${data.context}_\n` : '';
+
+        const preview =
+          `*Draft ${channelLabel} to ${data.recipient}* (#${approvalId})` +
+          subjectLine +
+          contextLine +
+          `\n\n${data.text}` +
+          `\n\n_Reply: *send* / *edit: [changes]* / *cancel*_`;
+
+        await deps.sendMessage(data.chatJid, preview);
+        logger.info(
+          { approvalId, recipient: data.recipient, channel: data.channel },
+          'Approval request created and preview sent',
         );
       }
       break;

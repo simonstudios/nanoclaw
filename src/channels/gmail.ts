@@ -91,9 +91,13 @@ export class GmailChannel implements Channel {
 
     // Start polling with error backoff
     const schedulePoll = () => {
-      const backoffMs = this.consecutiveErrors > 0
-        ? Math.min(this.pollIntervalMs * Math.pow(2, this.consecutiveErrors), 30 * 60 * 1000)
-        : this.pollIntervalMs;
+      const backoffMs =
+        this.consecutiveErrors > 0
+          ? Math.min(
+              this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
+              30 * 60 * 1000,
+            )
+          : this.pollIntervalMs;
       this.pollTimer = setTimeout(() => {
         this.pollForMessages()
           .catch((err) => logger.error({ err }, 'Gmail poll error'))
@@ -114,6 +118,49 @@ export class GmailChannel implements Channel {
       return;
     }
 
+    // New email to external contact (mailto:user@example.com)
+    if (jid.startsWith('mailto:')) {
+      const to = jid.replace(/^mailto:/, '');
+      // Extract subject from text if present (format: "Subject: ...\n\n...")
+      let subject = 'Message from NanoClaw';
+      let body = text;
+      const subjectMatch = text.match(/^Subject:\s*(.+)\n\n([\s\S]*)$/);
+      if (subjectMatch) {
+        subject = subjectMatch[1].trim();
+        body = subjectMatch[2];
+      }
+
+      const headers = [
+        `To: ${to}`,
+        `From: ${this.userEmail}`,
+        `Subject: ${subject}`,
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        body,
+      ].join('\r\n');
+
+      const encodedMessage = Buffer.from(headers)
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+      try {
+        const res = await this.gmail.users.messages.send({
+          userId: 'me',
+          requestBody: { raw: encodedMessage },
+        });
+        logger.info(
+          { to, subject, threadId: res.data.threadId },
+          'Gmail new email sent',
+        );
+      } catch (err) {
+        logger.error({ jid, err }, 'Failed to send new Gmail email');
+      }
+      return;
+    }
+
+    // Reply to existing thread (gmail:threadId)
     const threadId = jid.replace(/^gmail:/, '');
     const meta = this.threadMeta.get(threadId);
 
@@ -162,7 +209,7 @@ export class GmailChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.startsWith('gmail:');
+    return jid.startsWith('gmail:') || jid.startsWith('mailto:');
   }
 
   async disconnect(): Promise<void> {
@@ -210,8 +257,18 @@ export class GmailChannel implements Channel {
       this.consecutiveErrors = 0;
     } catch (err) {
       this.consecutiveErrors++;
-      const backoffMs = Math.min(this.pollIntervalMs * Math.pow(2, this.consecutiveErrors), 30 * 60 * 1000);
-      logger.error({ err, consecutiveErrors: this.consecutiveErrors, nextPollMs: backoffMs }, 'Gmail poll failed');
+      const backoffMs = Math.min(
+        this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
+        30 * 60 * 1000,
+      );
+      logger.error(
+        {
+          err,
+          consecutiveErrors: this.consecutiveErrors,
+          nextPollMs: backoffMs,
+        },
+        'Gmail poll failed',
+      );
     }
   }
 
@@ -268,9 +325,7 @@ export class GmailChannel implements Channel {
 
     // Find the main group to deliver the email notification
     const groups = this.opts.registeredGroups();
-    const mainEntry = Object.entries(groups).find(
-      ([, g]) => g.isMain === true,
-    );
+    const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
 
     if (!mainEntry) {
       logger.debug(

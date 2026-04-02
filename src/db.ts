@@ -65,6 +65,29 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
 
+    CREATE TABLE IF NOT EXISTS bot_threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      subject TEXT,
+      status TEXT DEFAULT 'active',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_bot_threads_thread ON bot_threads(thread_id);
+    CREATE INDEX IF NOT EXISTS idx_bot_threads_recipient ON bot_threads(recipient);
+
+    CREATE TABLE IF NOT EXISTS pending_approvals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      content TEXT NOT NULL,
+      metadata TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status);
+
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -555,6 +578,138 @@ export function logTaskRun(log: TaskRunLog): void {
     log.result,
     log.error,
   );
+}
+
+// --- Bot thread accessors ---
+
+export interface BotThread {
+  id: number;
+  channel: string;
+  thread_id: string;
+  recipient: string;
+  subject: string | null;
+  status: string;
+  created_at: string;
+}
+
+export function createBotThread(thread: Omit<BotThread, 'id'>): number {
+  const result = db
+    .prepare(
+      `INSERT INTO bot_threads (channel, thread_id, recipient, subject, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      thread.channel,
+      thread.thread_id,
+      thread.recipient,
+      thread.subject,
+      thread.status,
+      thread.created_at,
+    );
+  return result.lastInsertRowid as number;
+}
+
+export function getBotThreadByThreadId(
+  threadId: string,
+): BotThread | undefined {
+  return db
+    .prepare('SELECT * FROM bot_threads WHERE thread_id = ? AND status = ?')
+    .get(threadId, 'active') as BotThread | undefined;
+}
+
+export function getBotThreadByRecipient(
+  recipient: string,
+): BotThread | undefined {
+  return db
+    .prepare(
+      'SELECT * FROM bot_threads WHERE recipient = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+    )
+    .get(recipient, 'active') as BotThread | undefined;
+}
+
+export function getActiveBotThreads(): BotThread[] {
+  return db
+    .prepare(
+      "SELECT * FROM bot_threads WHERE status = 'active' ORDER BY created_at DESC",
+    )
+    .all() as BotThread[];
+}
+
+export function updateBotThreadStatus(id: number, status: string): void {
+  db.prepare('UPDATE bot_threads SET status = ? WHERE id = ?').run(status, id);
+}
+
+// --- Pending approval accessors ---
+
+export interface PendingApproval {
+  id: number;
+  channel: string;
+  recipient: string;
+  content: string;
+  metadata: string | null;
+  status: string;
+  created_at: string;
+}
+
+export function createPendingApproval(
+  approval: Omit<PendingApproval, 'id'>,
+): number {
+  const result = db
+    .prepare(
+      `INSERT INTO pending_approvals (channel, recipient, content, metadata, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      approval.channel,
+      approval.recipient,
+      approval.content,
+      approval.metadata,
+      approval.status,
+      approval.created_at,
+    );
+  return result.lastInsertRowid as number;
+}
+
+export function getPendingApprovals(): PendingApproval[] {
+  return db
+    .prepare(
+      "SELECT * FROM pending_approvals WHERE status = 'pending' ORDER BY created_at DESC",
+    )
+    .all() as PendingApproval[];
+}
+
+export function getPendingApprovalById(
+  id: number,
+): PendingApproval | undefined {
+  return db.prepare('SELECT * FROM pending_approvals WHERE id = ?').get(id) as
+    | PendingApproval
+    | undefined;
+}
+
+export function updateApprovalStatus(id: number, status: string): void {
+  db.prepare('UPDATE pending_approvals SET status = ? WHERE id = ?').run(
+    status,
+    id,
+  );
+}
+
+export function updateApprovalContent(id: number, content: string): void {
+  db.prepare('UPDATE pending_approvals SET content = ? WHERE id = ?').run(
+    content,
+    id,
+  );
+}
+
+export function expireOldApprovals(olderThanHours: number = 24): number {
+  const cutoff = new Date(
+    Date.now() - olderThanHours * 60 * 60 * 1000,
+  ).toISOString();
+  const result = db
+    .prepare(
+      "UPDATE pending_approvals SET status = 'expired' WHERE status = 'pending' AND created_at < ?",
+    )
+    .run(cutoff);
+  return result.changes;
 }
 
 // --- Router state accessors ---

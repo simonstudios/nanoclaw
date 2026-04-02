@@ -8,6 +8,7 @@ import {
   runContainerAgent,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { cleanupExpiredApprovals } from './approvals.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -272,6 +273,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 
   const loop = async () => {
     try {
+      // Expire old pending approvals (24h)
+      cleanupExpiredApprovals();
+
       const dueTasks = getDueTasks();
       if (dueTasks.length > 0) {
         logger.info({ count: dueTasks.length }, 'Found due tasks');
