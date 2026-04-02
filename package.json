@@ -26,6 +26,8 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "11.10.0",
     "cron-parser": "5.5.0",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^146.0.0",
     "groq-sdk": "^0.37.0",
     "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5",
