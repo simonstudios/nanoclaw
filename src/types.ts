@@ -52,6 +52,10 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   image_path?: string;
+  thread_id?: string;
+  reply_to_message_id?: string;
+  reply_to_message_content?: string;
+  reply_to_sender_name?: string;
 }
 
 export interface ScheduledTask {
