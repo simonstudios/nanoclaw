@@ -174,6 +174,7 @@ If it gets messy (more than 3 rounds of conflicts):
 # Step 5: Validation
 Run:
 - `npm run build`
+- `npm rebuild better-sqlite3` (ensures the native module matches the running Node version — prevents ABI mismatch crashes if npm was invoked by a different Node version)
 - `npm test` (do not fail the flow if tests are not configured)
 
 If build fails:
