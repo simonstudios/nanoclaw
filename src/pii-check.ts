@@ -2,7 +2,7 @@ import { AnonymizeConfig } from './anonymize.js';
 import { logger } from './logger.js';
 
 export const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-const DEFAULT_MODEL = 'qwen2.5:7b';
+const DEFAULT_MODEL = 'gemma4:e4b';
 const TIMEOUT_MS = 90_000;
 
 export const PII_CMD_APPROVE = 'approve';

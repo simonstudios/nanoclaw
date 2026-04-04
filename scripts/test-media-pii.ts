@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
  * Comprehensive integration test for media PII pipeline.
- * Tests against live Ollama — requires qwen2.5:7b and llava:7b.
+ * Tests against live Ollama — requires gemma4:e4b.
  *
  * Usage: npx tsx scripts/test-media-pii.ts
  */
@@ -392,7 +392,7 @@ async function main(): Promise<void> {
     ]);
     ok('Created test image');
 
-    console.log('  Extracting text via llava:7b...');
+    console.log('  Extracting text via gemma4:e4b...');
     const text = await extractImageText(p, config);
     if (text) {
       ok('Vision extraction', `"${text.slice(0, 120).replace(/\n/g, ' ')}..."`);
@@ -411,11 +411,11 @@ async function main(): Promise<void> {
       if (allTagged) ok('Source tags correct');
       else fail('Source tags', 'missing or wrong');
     } else {
-      // llava:7b is non-deterministic — sometimes wraps output in prose
+      // Vision model is non-deterministic — sometimes wraps output in prose
       // that confuses the text PII model. This is expected behavior.
       skip(
         'Image PII detected',
-        'llava:7b output varied this run (non-deterministic — retry may pass)',
+        'vision model output varied this run (non-deterministic — retry may pass)',
       );
     }
   }
@@ -434,16 +434,16 @@ async function main(): Promise<void> {
     if (items.length === 0) {
       ok('Clean after anonymization', 'mapped names did not trigger PII alert');
     } else {
-      // Some false positives may occur due to llava hallucination
+      // Some false positives may occur due to vision model hallucination
       console.log(
-        `  Note: ${items.length} item(s) detected — may be hallucinated text from llava`,
+        `  Note: ${items.length} item(s) detected — may be hallucinated text from vision model`,
       );
       console.log(
         `  Items: ${items.map((i) => `"${i.text}" (${i.type})`).join(', ')}`,
       );
       skip(
         'Clean after anonymization',
-        'llava may hallucinate extra names beyond what is in the image',
+        'vision model may hallucinate extra names beyond what is in the image',
       );
     }
   }
@@ -663,13 +663,13 @@ async function main(): Promise<void> {
     const cfg: AnonymizeConfig = {
       enabled: true,
       piiCheck: true,
-      piiVisionModel: 'llava:13b',
+      piiVisionModel: 'gemma4:31b',
       mappings: {},
     };
-    if (cfg.piiVisionModel === 'llava:13b') {
+    if (cfg.piiVisionModel === 'gemma4:31b') {
       ok('Custom model', 'piiVisionModel correctly set');
     } else {
-      fail('Custom model', `expected llava:13b, got ${cfg.piiVisionModel}`);
+      fail('Custom model', `expected gemma4:31b, got ${cfg.piiVisionModel}`);
     }
   }
 

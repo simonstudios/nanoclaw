@@ -36,9 +36,9 @@ const mockFetch = vi.fn();
 const baseCfg: AnonymizeConfig = {
   enabled: true,
   piiCheck: true,
-  piiModel: 'qwen2.5:7b',
+  piiModel: 'gemma4:e4b',
   mediaPiiCheck: true,
-  piiVisionModel: 'llava:7b',
+  piiVisionModel: 'gemma4:e4b',
   mappings: { Olivia: 'Luna', Simon: 'Alex' },
 };
 
@@ -375,7 +375,7 @@ describe('warmupVisionModel', () => {
       expect.stringContaining('/api/generate'),
       expect.objectContaining({
         method: 'POST',
-        body: expect.stringContaining('llava:7b'),
+        body: expect.stringContaining('gemma4:e4b'),
       }),
     );
   });

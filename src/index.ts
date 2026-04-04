@@ -1225,14 +1225,14 @@ async function main(): Promise<void> {
   for (const group of Object.values(registeredGroups)) {
     const anonCfg = loadAnonymizeConfig(group.folder);
     if (anonCfg?.piiCheck) {
-      const m = anonCfg.piiModel || 'qwen2.5:7b';
+      const m = anonCfg.piiModel || 'gemma4:e4b';
       if (!warmedModels.has(m)) {
         warmupPiiModel(anonCfg);
         warmedModels.add(m);
       }
     }
     if (anonCfg?.mediaPiiCheck ?? anonCfg?.piiCheck) {
-      const m = anonCfg.piiVisionModel || 'llava:7b';
+      const m = anonCfg.piiVisionModel || 'gemma4:e4b';
       if (!warmedModels.has(m)) {
         warmupVisionModel(anonCfg);
         warmedModels.add(m);

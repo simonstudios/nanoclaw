@@ -10,7 +10,7 @@ import { IMAGE_REF_SOURCE, parseImageReferences } from './image.js';
 import { logger } from './logger.js';
 import { checkForPii, OLLAMA_URL, PiiItem } from './pii-check.js';
 
-const DEFAULT_VISION_MODEL = 'llava:7b';
+const DEFAULT_VISION_MODEL = 'gemma4:e4b';
 const VISION_TIMEOUT_MS = 60_000;
 const MAX_DOC_SIZE = 10 * 1024 * 1024; // 10MB
 
