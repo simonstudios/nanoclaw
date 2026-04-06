@@ -1069,7 +1069,11 @@ async function main(): Promise<void> {
       // Reply detection: check if message is from a tracked bot thread
       if (!msg.is_from_me && !msg.is_bot_message) {
         // WhatsApp: incoming 1:1 messages where chatJid matches a tracked thread
-        const waThread = getBotThreadByThreadId(chatJid);
+        // Guard: skip if chatJid is a registered group JID (prevents self-referential matching)
+        const isRegisteredGroup = !!registeredGroups[chatJid];
+        const waThread = isRegisteredGroup
+          ? undefined
+          : getBotThreadByThreadId(chatJid);
         // Gmail: emails delivered to main chat with [Email from ...] prefix
         const emailMatch = msg.content.match(/^\[Email from .+?<(.+?)>\]/);
         const gmailThread = emailMatch

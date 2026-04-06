@@ -15,6 +15,68 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
+/** RFC 2047 MIME-encode a Subject header if it contains non-ASCII characters. */
+function mimeEncodeSubject(subject: string): string {
+  if (/^[\x20-\x7E]*$/.test(subject)) return subject;
+  return `=?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`;
+}
+
+/** Repair double-encoded UTF-8 (e.g. Ã¢Â€Â" → —). */
+function fixDoubleEncodedUtf8(text: string): string {
+  try {
+    if (/\xC3[\x80-\xBF]/.test(text)) {
+      const bytes = Buffer.from(text, 'latin1');
+      const fixed = bytes.toString('utf-8');
+      if (!fixed.includes('\uFFFD')) return fixed;
+    }
+  } catch {
+    /* fall through */
+  }
+  return text;
+}
+
+/** Strip quoted replies, signatures, and rich-text artifacts from email body. */
+function cleanEmailBody(body: string): string {
+  let text = body;
+
+  // Strip \r carriage returns
+  text = text.replace(/\r/g, '');
+
+  // Strip quoted replies (On ... wrote:, From: ... Sent: ...)
+  text = text.replace(/\n+On .{10,80} wrote:\n[\s\S]*$/m, '');
+  text = text.replace(/\n+_{5,}\n+From: .+?\nSent: .+?[\s\S]*$/m, '');
+  // Outlook-style separator
+  text = text.replace(/\n+________________________________\n[\s\S]*$/, '');
+
+  // Strip email signatures (-- \n or common patterns)
+  text = text.replace(/\n-- \n[\s\S]*$/, '');
+  text = text.replace(/\n+Kind Regards[\s\S]*$/im, '');
+  text = text.replace(/\n+Best regards[\s\S]*$/im, '');
+  text = text.replace(/\n+Regards[\s\S]*$/im, '');
+
+  // Remove rich-text link artifacts: <http://...>
+  text = text.replace(/<https?:\/\/[^>]+>/g, '');
+
+  // Remove image placeholder tags: [image_name]
+  text = text.replace(/\[[\w\s-]+\d*\]/g, (match) => {
+    // Keep legitimate bracketed content like [1], [2] (numbered lists)
+    if (/^\[\d+\]$/.test(match)) return match;
+    // Remove likely image placeholders
+    if (/logo|image|icon|banner|cid:/i.test(match)) return '';
+    return match;
+  });
+
+  // Collapse multiple blank lines
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  // Truncate to ~2000 chars
+  if (text.length > 2000) {
+    text = text.slice(0, 2000).trimEnd() + '\n...';
+  }
+
+  return text.trim();
+}
+
 export interface GmailChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -133,7 +195,7 @@ export class GmailChannel implements Channel {
       const headers = [
         `To: ${to}`,
         `From: ${this.userEmail}`,
-        `Subject: ${subject}`,
+        `Subject: ${mimeEncodeSubject(subject)}`,
         'Content-Type: text/plain; charset=utf-8',
         '',
         body,
@@ -176,7 +238,7 @@ export class GmailChannel implements Channel {
     const headers = [
       `To: ${meta.sender}`,
       `From: ${this.userEmail}`,
-      `Subject: ${subject}`,
+      `Subject: ${mimeEncodeSubject(subject)}`,
       `In-Reply-To: ${meta.messageId}`,
       `References: ${meta.messageId}`,
       'Content-Type: text/plain; charset=utf-8',
@@ -287,7 +349,7 @@ export class GmailChannel implements Channel {
         ?.value || '';
 
     const from = getHeader('From');
-    const subject = getHeader('Subject');
+    const subject = fixDoubleEncodedUtf8(getHeader('Subject'));
     const rfc2822MessageId = getHeader('Message-ID');
     const threadId = msg.data.threadId || messageId;
     const timestamp = new Date(
@@ -302,8 +364,8 @@ export class GmailChannel implements Channel {
     // Skip emails from self (our own replies)
     if (senderEmail === this.userEmail) return;
 
-    // Extract body text
-    const body = this.extractTextBody(msg.data.payload);
+    // Extract body text and strip quoted replies, signatures, artifacts
+    const body = cleanEmailBody(this.extractTextBody(msg.data.payload));
 
     if (!body) {
       logger.debug({ messageId, subject }, 'Skipping email with no text body');

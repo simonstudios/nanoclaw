@@ -206,9 +206,11 @@ async function runTask(
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user — de-anonymize pseudonyms back to real names
-          const outText = anonConfig
+          const rawText = anonConfig
             ? deanonymize(streamedOutput.result, anonConfig)
             : streamedOutput.result;
+          // Prefix scheduled output so it stands out from normal conversation
+          const outText = `\u26A0\uFE0F *Reminder*\n\n${rawText}`;
           await deps.sendMessage(task.chat_jid, outText);
           scheduleClose();
         }
