@@ -683,8 +683,19 @@ async function startMessageLoop(): Promise<void> {
 
   logger.info(`NanoClaw running (default trigger: ${DEFAULT_TRIGGER})`);
 
+  const RECOVERY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  let lastRecoveryCheck = Date.now();
+
   while (true) {
     try {
+      // Periodic recovery: catch orphaned messages that were missed due to
+      // stale WhatsApp connections, trigger pattern edge cases, or restarts.
+      const now = Date.now();
+      if (now - lastRecoveryCheck >= RECOVERY_INTERVAL_MS) {
+        lastRecoveryCheck = now;
+        recoverPendingMessages();
+      }
+
       // PII holds persist indefinitely until the user responds.
       // No timeout — the message stays held until approve/skip/map.
 

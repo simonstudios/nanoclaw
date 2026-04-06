@@ -199,8 +199,24 @@ describe('TRIGGER_PATTERN', () => {
     expect(TRIGGER_PATTERN.test(`@${upper} hello`)).toBe(true);
   });
 
-  it('does not match when not at start of message', () => {
+  it('does not match when buried in middle of message', () => {
     expect(TRIGGER_PATTERN.test(`hello @${name}`)).toBe(false);
+  });
+
+  it('matches after [Image: ...] prefix', () => {
+    expect(
+      TRIGGER_PATTERN.test(
+        `[Image: attachments/img-123.jpg] @${name} what is this`,
+      ),
+    ).toBe(true);
+  });
+
+  it('matches after multiple media prefixes', () => {
+    expect(
+      TRIGGER_PATTERN.test(
+        `[Image: attachments/a.jpg] [DOC: attachments/b.pdf] @${name} check these`,
+      ),
+    ).toBe(true);
   });
 
   it('does not match partial name like @NameExtra (word boundary)', () => {

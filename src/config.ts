@@ -74,7 +74,10 @@ export function escapeRegex(str: string): string {
 }
 
 export function buildTriggerPattern(trigger: string): RegExp {
-  return new RegExp(`^${escapeRegex(trigger.trim())}\\b`, 'i');
+  // Allow trigger after optional [Image: ...], [DOC: ...], [PDF: ...] prefixes
+  // so image/document messages still match when the caption contains the trigger.
+  const mediaPrefix = String.raw`(?:\[(?:Image|DOC|PDF): [^\]]*\]\s*)*`;
+  return new RegExp(`^${mediaPrefix}${escapeRegex(trigger.trim())}\\b`, 'i');
 }
 
 export const DEFAULT_TRIGGER = `@${ASSISTANT_NAME}`;
