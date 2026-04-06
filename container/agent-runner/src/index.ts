@@ -54,11 +54,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
 type ContentBlock =
   | { type: 'text'; text: string }
   | {
       type: 'image';
-      source: { type: 'base64'; media_type: string; data: string };
+      source: { type: 'base64'; media_type: ImageMediaType; data: string };
     };
 
 interface QueuedInputMessage {
@@ -117,7 +119,7 @@ class MessageStream {
 
 function loadImageBlock(
   imagePath: string,
-  mediaType = 'image/jpeg',
+  mediaType: ImageMediaType = 'image/jpeg',
 ): ContentBlock | null {
   try {
     if (!fs.existsSync(imagePath)) {
@@ -155,7 +157,7 @@ function buildContentBlocks(
   for (const img of imageAttachments || []) {
     const block = loadImageBlock(
       path.join('/workspace/group', img.relativePath),
-      img.mediaType,
+      img.mediaType as ImageMediaType,
     );
     if (block) blocks.push(block);
   }
