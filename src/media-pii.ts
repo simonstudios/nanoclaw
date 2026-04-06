@@ -258,6 +258,9 @@ export interface DocSubstitutionResult {
   /** PDFs that could not be extracted — the reference was stripped to prevent
    *  the container from reading the raw file via pdf-reader. */
   failures: MediaCheckFailure[];
+  /** Docs that were successfully extracted — caller decides whether to quarantine
+   *  based on PII results. Each entry has the full path and filename. */
+  extractedDocs: Array<{ fullPath: string; filename: string }>;
 }
 
 /**
@@ -274,10 +277,12 @@ export async function substituteDocContent(
   config: AnonymizeConfig,
 ): Promise<DocSubstitutionResult> {
   const replacements = collectDocRefs(prompt);
-  if (replacements.length === 0) return { prompt, failures: [] };
+  if (replacements.length === 0)
+    return { prompt, failures: [], extractedDocs: [] };
 
   let result = prompt;
   const failures: MediaCheckFailure[] = [];
+  const extractedDocs: Array<{ fullPath: string; filename: string }> = [];
 
   for (const rep of replacements) {
     const fullPath = path.join(groupDir, rep.relativePath);
@@ -286,20 +291,19 @@ export async function substituteDocContent(
     if (text) {
       const substitution = `[Document content from ${filename}]\n${text}\n[End document content]`;
       result = result.replace(rep.fullMatch, substitution);
+      extractedDocs.push({ fullPath, filename });
     } else {
       result = result.replace(
         rep.fullMatch,
         `[Document: ${filename} — could not extract text for PII check, content withheld]`,
       );
       failures.push({ filename, reason: 'text extraction failed' });
+      // Quarantine files that couldn't be extracted (fail-closed)
+      quarantineFile(fullPath, groupDir);
     }
-
-    // Quarantine: move the raw file out of the container-accessible directory
-    // so the agent cannot read the original unanonymized content via filesystem.
-    quarantineFile(fullPath, groupDir);
   }
 
-  return { prompt: result, failures };
+  return { prompt: result, failures, extractedDocs };
 }
 
 /**

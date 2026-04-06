@@ -336,11 +336,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       imageAttachments.push(...cached.imageAttachments);
       pendingAnon.delete(chatJid);
     }
-  } else if (anonConfig) {
+  }
+
+  // Track docs that were extracted — quarantine decision deferred until after PII check
+  let extractedDocs: Array<{ fullPath: string; filename: string }> = [];
+
+  if (!piiApproved.has(chatJid) && anonConfig) {
     const pdfResult = await substituteDocContent(prompt, groupDir, anonConfig);
     rawSubstitutedPrompt = pdfResult.prompt;
     anonPrompt = anonymize(pdfResult.prompt, anonConfig);
     mediaFailures.push(...pdfResult.failures);
+    extractedDocs = pdfResult.extractedDocs;
 
     logger.debug(
       { group: group.name, changed: anonPrompt !== prompt },
@@ -370,9 +376,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             chatJid,
             `PII check failed: ${msg}\nMessage NOT sent. Ensure Ollama is running, then resend.`,
           );
+          // Fail-closed: quarantine any extracted docs
+          for (const doc of extractedDocs) {
+            quarantineFile(doc.fullPath, groupDir);
+          }
           return true; // Don't retry — user must resend after fixing Ollama
         }
         if (piiResult) allPiiItems.push(...piiResult.found);
+      }
+
+      // Document quarantine decision: if the text PII check found remaining
+      // PII, quarantine all extracted docs (we can't attribute items to
+      // specific docs). If clean, keep them accessible to the agent.
+      if (extractedDocs.length > 0) {
+        const textPiiFound = allPiiItems.length > 0;
+        for (const doc of extractedDocs) {
+          if (textPiiFound) {
+            quarantineFile(doc.fullPath, groupDir);
+            logger.info(
+              { filename: doc.filename },
+              'Document quarantined — PII found in text',
+            );
+          } else {
+            logger.info(
+              { filename: doc.filename },
+              'Document text is PII-clean — file kept accessible',
+            );
+          }
+        }
       }
 
       // Image processing — three outcomes per image:
@@ -391,18 +422,27 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             mediaFailures.push(result.failure);
             quarantineFile(imgPath, groupDir);
           } else if (result.extractedText) {
-            // Image has readable text — inline the text, quarantine the image.
-            // The extracted text will be anonymized by the outer anonymize()
-            // that already ran, but we need to re-anonymize the prompt with
-            // the new image text appended.
+            // Image has readable text — inline the anonymized text so the
+            // agent always gets the textual content regardless.
             rawSubstitutedPrompt += `\n[Image text from ${imgFilename}]\n${result.extractedText}\n[End image text]`;
             anonPrompt = anonymize(rawSubstitutedPrompt, anonConfig!);
-            allPiiItems.push(...result.items);
-            quarantineFile(imgPath, groupDir);
-            logger.info(
-              { filename: imgFilename },
-              'Image contained text — inlined as text, image quarantined',
-            );
+
+            if (result.items.length > 0) {
+              // Remaining PII found — quarantine the image, hold for approval.
+              allPiiItems.push(...result.items);
+              quarantineFile(imgPath, groupDir);
+              logger.info(
+                { filename: imgFilename, piiCount: result.items.length },
+                'Image contained PII — inlined as text, image quarantined',
+              );
+            } else {
+              // Text is PII-clean — keep the original image for the agent.
+              confirmedImages.push(img);
+              logger.info(
+                { filename: imgFilename },
+                'Image text is PII-clean — image forwarded with inlined text',
+              );
+            }
           } else if (result.needsConfirmation) {
             // No readable text — need user confirmation
             imagesNeedingConfirmation.push(imgFilename);
