@@ -209,9 +209,16 @@ async function runTask(
           const rawText = anonConfig
             ? deanonymize(streamedOutput.result, anonConfig)
             : streamedOutput.result;
-          // Prefix scheduled output so it stands out from normal conversation
-          const outText = `\u26A0\uFE0F *Reminder*\n\n${rawText}`;
-          await deps.sendMessage(task.chat_jid, outText);
+          // Prefix scheduled output so it stands out from normal conversation.
+          // Skip if content is empty after internal tag stripping (e.g. agent
+          // wrapped entire output in <internal> tags for silent checks).
+          const stripped = rawText
+            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+            .trim();
+          const outText = stripped
+            ? `\u26A0\uFE0F *Reminder*\n\n${rawText}`
+            : '';
+          if (outText) await deps.sendMessage(task.chat_jid, outText);
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {

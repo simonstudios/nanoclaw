@@ -384,14 +384,30 @@ AGENT_BROWSER_PROFILE=/workspace/group/.wine-society-profile agent-browser open 
 
 ---
 
-## Paperless-ngx (Document Management)
+## Finding Documents
 
-Simon has Paperless-ngx running locally. Use it to search and retrieve documents when he asks about bills, letters, contracts, or any stored paperwork.
+Simon has two document sources. When he asks for a document, letter, bill, contract, reference, or any file — **search both**:
+
+### 1. Documents folder (`/workspace/extra/Documents/`)
+
+A mounted folder of categorised files. Browse with `ls` and `find`, read with `cat`.
+
+Key folders: Business, Finance, Home, Health, Family and community, Reference, Career, Technology, Learning, Leisure.
+
+```bash
+# Find files by name
+find /workspace/extra/Documents -iname "*skylight*" -type f
+
+# Search file contents
+grep -rl "council tax" /workspace/extra/Documents/
+```
+
+### 2. Paperless-ngx (scanned/imported documents)
+
+A document management system with full-text search, tags, and correspondents.
 
 **Base URL**: `http://host.docker.internal:8000/api/`
 **Auth**: `Authorization: Token $PAPERLESS_TOKEN` (env var — never log or store the token)
-
-### Key endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
@@ -399,27 +415,19 @@ Simon has Paperless-ngx running locally. Use it to search and retrieve documents
 | `GET /api/documents/` | List all documents (paginated) |
 | `GET /api/documents/<id>/` | Get document metadata |
 | `GET /api/correspondents/` | List correspondents |
-| `GET /api/document_types/` | List document types |
 | `GET /api/tags/` | List tags |
 | `GET /api/documents/<id>/download/` | Download original file |
-| `GET /api/documents/<id>/preview/` | Preview (thumbnail) |
-
-### Usage examples
 
 ```bash
-# Search for documents
+# Search Paperless
 curl -s -H "Authorization: Token $PAPERLESS_TOKEN" \
   "http://host.docker.internal:8000/api/documents/?query=council+tax" | jq .
 
 # Get all tags
 curl -s -H "Authorization: Token $PAPERLESS_TOKEN" \
   "http://host.docker.internal:8000/api/tags/" | jq .
-
-# Get a specific document's details
-curl -s -H "Authorization: Token $PAPERLESS_TOKEN" \
-  "http://host.docker.internal:8000/api/documents/42/" | jq .
 ```
 
 ### How to respond
 
-When the user asks about documents, search Paperless first. Summarize what you find — title, correspondent, date, tags, and a brief content snippet if available. If multiple matches, list them concisely.
+Always check both sources. Summarise what you find — title, date, location/source, and a brief content snippet. If multiple matches, list them concisely. Say which source each result came from.
