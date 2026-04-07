@@ -82,9 +82,13 @@ When contacting someone, pick the best channel:
 - **Email**: Professional but warm. Use proper salutation, clear ask, sign off with Simon's name
 - **WhatsApp**: Conversational but polite. No formal salutation needed. Keep it concise
 
-### Email Notifications
+### Email Notifications — ALWAYS SURFACE THESE
 
-When you receive an email notification (messages starting with `[Email from ...`), check if it's a reply to an outreach thread. If so, summarise the key points and suggest next steps. For unsolicited emails, inform Simon but do NOT reply unless specifically asked.
+When you receive an email notification (messages starting with `[Email from ...`), you MUST immediately surface it to the user before doing anything else. Never silently process an email — always show what was received.
+
+- **Reply to outreach thread**: Quote the key parts of the email verbatim, summarise, and suggest next steps
+- **Unsolicited email**: Forward a summary and ask if action is needed
+- **Never assume** you can handle an email without showing it to the user first — even if you plan to take action on it, the user needs to see what arrived
 
 ### Reply Handling
 
