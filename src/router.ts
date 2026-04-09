@@ -23,14 +23,21 @@ export function formatMessages(
       m.reply_to_message_content && m.reply_to_sender_name
         ? `\n  <quoted_message from="${escapeXml(m.reply_to_sender_name)}">${escapeXml(m.reply_to_message_content)}</quoted_message>`
         : '';
-    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${replyAttr}>${replySnippet}${escapeXml(m.content)}</message>`;
+    const isEmail = m.content.startsWith('[Email from');
+    const typeAttr = isEmail ? ' type="email"' : '';
+    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${typeAttr}${replyAttr}>${replySnippet}${escapeXml(m.content)}</message>`;
   });
 
   const header = timezone
     ? `<context timezone="${escapeXml(timezone)}" />\n`
     : '';
 
-  return `${header}<messages>\n${lines.join('\n')}\n</messages>`;
+  const hasEmails = messages.some((m) => m.content.startsWith('[Email from'));
+  const emailAlert = hasEmails
+    ? '\n\n<email_alert>\nIMPORTANT: The messages above contain one or more incoming emails (marked type="email"). You MUST immediately surface each email to the user: state who it\'s from, quote the key contents, and suggest next steps. Do this BEFORE responding to any other messages.\n</email_alert>'
+    : '';
+
+  return `${header}<messages>\n${lines.join('\n')}\n</messages>${emailAlert}`;
 }
 
 export function stripInternalTags(text: string): string {
